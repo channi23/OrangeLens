@@ -12,6 +12,8 @@ SERVICE_NAME="truthlens-api"
 BUCKET_NAME="truthlens-evidence"
 DATASET_ID="truthlens_logs"
 TABLE_ID="verification_requests"
+GEMINI_MODEL=${GEMINI_MODEL:-"gemini-1.5-flash-002"}
+GEMINI_MODE=${GEMINI_MODE:-"express"}
 
 echo "🚀 Starting TruthLens deployment..."
 
@@ -113,6 +115,7 @@ bq mk --table \
 echo "🔐 Creating secrets..."
 echo "your-api-key-here" | gcloud secrets create truthlens-api-key --data-file=- || echo "Secret already exists"
 echo "your-fact-check-api-key-here" | gcloud secrets create fact-check-api-key --data-file=- || echo "Secret already exists"
+echo "placeholder-gemini-express-key" | gcloud secrets create gemini-express-api-key --data-file=- || echo "Secret already exists"
 
 # Build and deploy API
 echo "🏗️ Building and deploying API..."
@@ -138,7 +141,9 @@ gcloud run deploy $SERVICE_NAME \
     --set-env-vars GOOGLE_CLOUD_LOCATION=$REGION \
     --set-env-vars STORAGE_BUCKET=$BUCKET_NAME \
     --set-env-vars BIGQUERY_DATASET=$DATASET_ID \
-    --set-env-vars BIGQUERY_TABLE=$TABLE_ID
+    --set-env-vars BIGQUERY_TABLE=$TABLE_ID \
+    --set-env-vars GEMINI_MODEL=$GEMINI_MODEL,GEMINI_MODE=$GEMINI_MODE \
+    --set-secrets GEMINI_API_KEY=gemini-express-api-key:latest
 
 # Get Cloud Run URL
 CLOUD_RUN_URL=$(gcloud run services describe $SERVICE_NAME --region=$REGION --format="value(status.url)")

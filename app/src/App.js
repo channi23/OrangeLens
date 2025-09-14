@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import './App.css';
 
-const API_BASE_URL = process.env.REACT_APP_API_URL || 'https://api.truthlens.app';
+const API_BASE_URL = 'https://truthlens-api-276376440888.us-central1.run.app';
+const API_KEY = process.env.REACT_APP_API_KEY;
 
 function App() {
   const [claim, setClaim] = useState('');
@@ -25,6 +26,18 @@ function App() {
     if (sharedText) {
       setClaim(sharedText);
     }
+
+    // If a shared image was provided via the service worker, fetch and attach it
+    const sharedImagePath = urlParams.get('sharedImage');
+    if (sharedImagePath) {
+      fetch(sharedImagePath)
+        .then(res => res.blob())
+        .then(blob => {
+          const file = new File([blob], 'shared-image', { type: blob.type || 'image/jpeg' });
+          setImage(file);
+        })
+        .catch(() => {});
+    }
   }, []);
 
   const handleVerification = async () => {
@@ -37,24 +50,30 @@ function App() {
     const startTime = Date.now();
     
     try {
-      const formData = new FormData();
-      formData.append('text', claim);
-      formData.append('mode', mode);
-      formData.append('language', language);
-      
-      if (image) {
-        formData.append('image', image);
-      }
-
       setStep('Calling Gemini AI...');
-      
-      const response = await fetch(`${API_BASE_URL}/v1/verify`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${process.env.REACT_APP_API_KEY}`
-        },
-        body: formData
-      });
+
+      let response;
+      if (image) {
+        // Use multipart to hit unauthenticated image test endpoint
+        const form = new FormData();
+        form.append('text', claim);
+        form.append('mode', mode);
+        form.append('language', language);
+        form.append('image', image);
+
+        response = await fetch(`${API_BASE_URL}/v1/verify-image-test`, {
+          method: 'POST',
+          body: form
+        });
+      } else {
+        // Text-only path uses the test endpoint (no auth required)
+        const requestBody = { text: claim, mode, language };
+        response = await fetch(`${API_BASE_URL}/v1/verify-test`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(requestBody)
+        });
+      }
 
       setStep('Checking Fact Database...');
       

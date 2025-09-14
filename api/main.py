@@ -11,11 +11,12 @@ from google.cloud import aiplatform
 from google.cloud import storage
 from google.cloud import bigquery
 from google.cloud import secretmanager
-import vertexai
 from vertexai.generative_models import GenerativeModel
+import vertexai
 import requests
 import hashlib
 import uuid
+import re
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -37,14 +38,20 @@ app.add_middleware(
 security = HTTPBearer()
 
 # Configuration
-PROJECT_ID = os.getenv("GOOGLE_CLOUD_PROJECT", "truthlens-project")
+PROJECT_ID = os.getenv("GOOGLE_CLOUD_PROJECT", "orange-lens-472108")
 LOCATION = os.getenv("GOOGLE_CLOUD_LOCATION", "us-central1")
-BUCKET_NAME = os.getenv("STORAGE_BUCKET", "truthlens-evidence")
+BUCKET_NAME = os.getenv("STORAGE_BUCKET", "truthlens-evidence-orange-lens-472108")
 DATASET_ID = os.getenv("BIGQUERY_DATASET", "truthlens_logs")
 TABLE_ID = os.getenv("BIGQUERY_TABLE", "verification_requests")
 
 # Initialize clients
+# Set API version to beta for Gemini 1.5 models (Vertex path kept for backwards compatibility)
+os.environ["GOOGLE_CLOUD_AI_PLATFORM_API_VERSION"] = "v1beta"
 vertexai.init(project=PROJECT_ID, location=LOCATION)
+try:
+    logging.error(f"Startup config: PROJECT_ID={PROJECT_ID}, LOCATION={LOCATION}")
+except Exception:
+    pass
 storage_client = storage.Client()
 bigquery_client = bigquery.Client()
 secret_client = secretmanager.SecretManagerServiceClient()
@@ -80,11 +87,65 @@ def detect_language(text: str) -> str:
         return "en"  # English
 
 # Gemini AI integration
-async def verify_with_gemini(text: str, image_data: Optional[bytes] = None, language: str = "en") -> Dict[str, Any]:
-    """Verify claim using Vertex AI Gemini"""
+# Allow overriding the model via environment variable
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-1.5-flash-002")
+GEMINI_MODE = os.getenv("GEMINI_MODE", "express")  # express | vertex
+try:
+    logging.error(f"Using GEMINI_MODEL={GEMINI_MODEL}, GEMINI_MODE={GEMINI_MODE}")
+except Exception:
+    pass
+
+def _get_gemini_api_key() -> str:
+    """Get Gemini Express API key from env or Secret Manager."""
+    key = os.getenv("GEMINI_API_KEY", "")
+    if key:
+        return key
+    return get_secret("gemini-express-api-key")
+
+async def call_gemini_express(text: str, language: str = "en") -> Dict[str, Any]:
+    """Call Gemini via Generative Language (Express) API and return raw response JSON."""
     try:
-        model = GenerativeModel("gemini-1.5-flash")
-        
+        prompts = {
+            "en": f"""
+            Analyze the following claim for factual accuracy and provide a JSON response.
+            Claim: \"{text}\"
+            Respond ONLY with JSON keys: verdict (true|false|misleading|unverified), confidence (0..1), explanation, key_facts (array), reasoning
+            """.strip(),
+            "hi": f"""
+            निम्नलिखित दावे का विश्लेषण करें और केवल JSON में उत्तर दें: verdict, confidence, explanation, key_facts, reasoning
+            दावा: \"{text}\"
+            """.strip(),
+            "ta": f"""
+            பின்வரும் கூற்றை பகுப்பாய்வு செய்து JSON வடிவில் மட்டுமே பதிலளிக்கவும்: verdict, confidence, explanation, key_facts, reasoning
+            கூற்று: \"{text}\"
+            """.strip(),
+        }
+        user_text = prompts.get(language, prompts["en"])
+
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
+        api_key = _get_gemini_api_key()
+        if not api_key:
+            raise RuntimeError("Missing GEMINI_API_KEY or Secret gemini-express-api-key")
+
+        payload = {
+            "contents": [
+                {
+                    "role": "user",
+                    "parts": [{"text": user_text}],
+                }
+            ]
+        }
+        params = {"key": api_key}
+        headers = {"Content-Type": "application/json"}
+        resp = requests.post(url, params=params, headers=headers, json=payload, timeout=30)
+        resp.raise_for_status()
+        return resp.json()
+    except Exception as e:
+        logging.error(f"Gemini Express call failed: {e}")
+        raise HTTPException(status_code=500, detail="Gemini Express call failed")
+async def verify_with_gemini(text: str, image_data: Optional[bytes] = None, language: str = "en") -> Dict[str, Any]:
+    """Verify claim using Gemini (Express or Vertex)."""
+    try:
         # Construct prompt based on language
         prompts = {
             "en": f"""
@@ -130,26 +191,60 @@ async def verify_with_gemini(text: str, image_data: Optional[bytes] = None, lang
             புறநிலையாக இருங்கள், குறிப்பிட்ட ஆதாரங்களை மேற்கோள் காட்டுங்கள், மற்றும் உங்கள் நம்பிக்கை நிலையை விளக்குங்கள்।
             """
         }
-        
         prompt = prompts.get(language, prompts["en"])
-        
-        # Prepare content
+
+        # Express path
+        if GEMINI_MODE.lower() == "express":
+            data = await call_gemini_express(text, language)
+            # Extract the generated text
+            try:
+                text_out = data["candidates"][0]["content"]["parts"][0]["text"]
+            except Exception:
+                text_out = ""
+
+            def parse_json_from_text(t: str):
+                if not t:
+                    return None
+                s = t.strip()
+                # Remove triple backtick fences like ```json ... ```
+                if s.startswith("```"):
+                    s = re.sub(r"^```[a-zA-Z]*\s*", "", s)
+                    s = re.sub(r"\s*```$", "", s)
+                # Direct parse
+                try:
+                    return json.loads(s)
+                except Exception:
+                    pass
+                # Heuristic: extract first {...} block
+                try:
+                    start = s.find('{')
+                    end = s.rfind('}')
+                    if start != -1 and end != -1 and end > start:
+                        return json.loads(s[start:end+1])
+                except Exception:
+                    pass
+                return None
+
+            parsed = parse_json_from_text(text_out)
+            if parsed is not None:
+                return parsed
+            return {
+                "verdict": "unverified",
+                "confidence": 0.5,
+                "explanation": text_out or "Gemini Express returned no parsable JSON",
+                "key_facts": [],
+                "reasoning": "AI response could not be parsed as JSON"
+            }
+
+        # Vertex fallback
+        model = GenerativeModel(GEMINI_MODEL)
         content = [prompt]
         if image_data:
-            content.append({
-                "mime_type": "image/jpeg",
-                "data": image_data
-            })
-        
-        # Generate response
+            content.append({"mime_type": "image/jpeg", "data": image_data})
         response = model.generate_content(content)
-        
-        # Parse JSON response
         try:
-            result = json.loads(response.text)
-            return result
+            return json.loads(response.text)
         except json.JSONDecodeError:
-            # Fallback if JSON parsing fails
             return {
                 "verdict": "unverified",
                 "confidence": 0.5,
@@ -177,8 +272,8 @@ async def check_fact_check_api(text: str, language: str = "en") -> Dict[str, Any
             "pageSize": 5
         }
         
-        # Use API key from Secret Manager
-        api_key = get_secret("fact-check-api-key")
+        # Use API key from environment (preferred for local) or Secret Manager
+        api_key = os.getenv("FACT_CHECK_API_KEY") or get_secret("fact-check-api-key")
         if not api_key:
             return {"citations": [], "fact_check_results": []}
         
@@ -263,6 +358,127 @@ async def health_check():
     """Health check endpoint"""
     return {"status": "healthy", "timestamp": datetime.utcnow().isoformat()}
 
+@app.post("/v1/verify-test")
+async def verify_claim_test(request: dict):
+    """Test endpoint: call Gemini Express and return normalized verification format."""
+    request_id = str(uuid.uuid4())
+    try:
+        text = request.get("text", "")
+        language = request.get("language", "en")
+        if language == "auto":
+            language = detect_language(text)
+
+        # Call Express and extract model text
+        data = await call_gemini_express(text, language)
+        try:
+            model_text = data["candidates"][0]["content"]["parts"][0]["text"]
+        except Exception:
+            model_text = ""
+
+        # Try to parse model_text as JSON per our contract (strip code fences if present)
+        def parse_json_from_text(t: str):
+            if not t:
+                return None
+            s = t.strip()
+            if s.startswith("```"):
+                s = re.sub(r"^```[a-zA-Z]*\s*", "", s)
+                s = re.sub(r"\s*```$", "", s)
+            try:
+                return json.loads(s)
+            except Exception:
+                pass
+            try:
+                start = s.find('{')
+                end = s.rfind('}')
+                if start != -1 and end != -1 and end > start:
+                    return json.loads(s[start:end+1])
+            except Exception:
+                pass
+            return None
+
+        payload = parse_json_from_text(model_text) or {
+            "verdict": "unverified",
+            "confidence": 0.5,
+            "explanation": model_text or "Gemini returned no parsable JSON",
+            "key_facts": [],
+            "reasoning": "AI response could not be parsed as JSON"
+        }
+
+        # Return in the format the frontend expects
+        return {
+            "request_id": request_id,
+            "verdict": payload.get("verdict", "unverified"),
+            "confidence": payload.get("confidence", 0.5),
+            "explanation": payload.get("explanation", ""),
+            "key_facts": payload.get("key_facts", []),
+            "reasoning": payload.get("reasoning", ""),
+            "citations": [],
+            "timestamp": datetime.utcnow().isoformat()
+        }
+    except Exception as e:
+        logging.error(f"/verify-test failed: {e}")
+        return {"request_id": request_id, "error": "Express call failed", "verdict": "error"}
+
+@app.post("/v1/verify-image-test")
+async def verify_image_test(
+    text: str = Form(""),
+    language: str = Form("en"),
+    image: Optional[UploadFile] = File(None)
+):
+    """Unauthenticated image-friendly test endpoint. Uses Express, ignores image content for now."""
+    request_id = str(uuid.uuid4())
+    try:
+        if language == "auto":
+            language = detect_language(text)
+
+        data = await call_gemini_express(text, language)
+        try:
+            model_text = data["candidates"][0]["content"]["parts"][0]["text"]
+        except Exception:
+            model_text = ""
+
+        def parse_json_from_text(t: str):
+            if not t:
+                return None
+            s = t.strip()
+            if s.startswith("```"):
+                s = re.sub(r"^```[a-zA-Z]*\\s*", "", s)
+                s = re.sub(r"\\s*```$", "", s)
+            try:
+                return json.loads(s)
+            except Exception:
+                pass
+            try:
+                start = s.find('{')
+                end = s.rfind('}')
+                if start != -1 and end != -1 and end > start:
+                    return json.loads(s[start:end+1])
+            except Exception:
+                pass
+            return None
+
+        payload = parse_json_from_text(model_text) or {
+            "verdict": "unverified",
+            "confidence": 0.5,
+            "explanation": model_text or "Gemini returned no parsable JSON",
+            "key_facts": [],
+            "reasoning": "AI response could not be parsed as JSON"
+        }
+
+        return {
+            "request_id": request_id,
+            "verdict": payload.get("verdict", "unverified"),
+            "confidence": payload.get("confidence", 0.5),
+            "explanation": payload.get("explanation", ""),
+            "key_facts": payload.get("key_facts", []),
+            "reasoning": payload.get("reasoning", ""),
+            "citations": [],
+            "timestamp": datetime.utcnow().isoformat()
+        }
+    except Exception as e:
+        logging.error(f"/verify-image-test failed: {e}")
+        return {"request_id": request_id, "error": "Express call failed", "verdict": "error"}
+
 @app.post("/v1/verify")
 async def verify_claim(
     text: str = Form(...),
@@ -336,6 +552,49 @@ async def verify_claim(
     except Exception as e:
         logging.error(f"Verification failed for request {request_id}: {e}")
         raise HTTPException(status_code=500, detail="Verification failed")
+
+# Result combination
+def combine_results(gemini_result: Dict[str, Any], fact_check_result: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """Combine Gemini and Fact Check results"""
+    if not fact_check_result:
+        return gemini_result
+    
+    # If we have fact check results, enhance the Gemini result
+    combined = gemini_result.copy()
+    
+    # Add fact check citations if available
+    if fact_check_result.get("citations"):
+        combined["citations"] = fact_check_result["citations"]
+    
+    # Adjust confidence based on fact check results
+    if fact_check_result.get("confidence"):
+        combined["confidence"] = max(combined.get("confidence", 0), fact_check_result["confidence"])
+    
+    return combined
+
+# Logging
+async def store_logs(request_id: str, text: str, language: str, mode: str, result: Dict[str, Any], start_time: datetime):
+    """Store request logs in BigQuery"""
+    try:
+        table = bigquery_client.get_table(f"{PROJECT_ID}.{DATASET_ID}.{TABLE_ID}")
+        
+        row = {
+            "request_id": request_id,
+            "timestamp": start_time.isoformat(),
+            "text": text[:1000],  # Truncate for storage
+            "language": language,
+            "mode": mode,
+            "verdict": result.get("verdict", "error"),
+            "confidence": result.get("confidence", 0.0),
+            "cost": result.get("cost", 0.0),
+            "latency_ms": (datetime.utcnow() - start_time).total_seconds() * 1000
+        }
+        
+        errors = bigquery_client.insert_rows_json(table, [row])
+        if errors:
+            logging.error(f"Failed to insert log row: {errors}")
+    except Exception as e:
+        logging.error(f"Failed to store logs: {e}")
 
 def calculate_cost(mode: str, text_length: int, has_image: bool) -> float:
     """Calculate estimated cost for the request"""
