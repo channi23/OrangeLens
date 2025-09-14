@@ -1,0 +1,13 @@
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+google-cloud-aiplatform==1.38.1
+google-cloud-storage==2.10.0
+google-cloud-bigquery==3.13.0
+google-cloud-secret-manager==2.16.4
+vertexai==1.38.1
+requests==2.31.0
+python-multipart==0.0.6
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+python-dotenv==1.0.0
+pydantic==2.5.0

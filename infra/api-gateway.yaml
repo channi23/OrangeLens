@@ -1,0 +1,190 @@
+openapi: 3.0.0
+info:
+  title: TruthLens API
+  description: AI-Powered Fact Verification API
+  version: 1.0.0
+  contact:
+    name: TruthLens Team
+    email: support@truthlens.app
+
+servers:
+  - url: https://truthlens-api-gateway-{gateway_id}-uc.a.run.app
+    description: TruthLens API Gateway
+
+paths:
+  /healthz:
+    get:
+      summary: Health Check
+      description: Check API health status
+      operationId: healthCheck
+      responses:
+        '200':
+          description: API is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: healthy
+                  timestamp:
+                    type: string
+                    format: date-time
+
+  /v1/verify:
+    post:
+      summary: Verify Claim
+      description: Verify a text claim or image for factual accuracy
+      operationId: verifyClaim
+      security:
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - text
+              properties:
+                text:
+                  type: string
+                  description: The claim to verify
+                  example: "The Earth is flat"
+                mode:
+                  type: string
+                  enum: [fast, deep]
+                  default: fast
+                  description: Verification mode
+                language:
+                  type: string
+                  enum: [en, hi, ta, auto]
+                  default: en
+                  description: Language of the claim
+                image:
+                  type: string
+                  format: binary
+                  description: Optional image to verify
+      responses:
+        '200':
+          description: Verification result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  request_id:
+                    type: string
+                    description: Unique request identifier
+                  verdict:
+                    type: string
+                    enum: [true, false, misleading, unverified]
+                    description: Verification verdict
+                  confidence:
+                    type: number
+                    format: float
+                    minimum: 0.0
+                    maximum: 1.0
+                    description: Confidence score
+                  explanation:
+                    type: string
+                    description: AI explanation of the verdict
+                  key_facts:
+                    type: array
+                    items:
+                      type: string
+                    description: Key facts identified
+                  reasoning:
+                    type: string
+                    description: Step-by-step reasoning
+                  citations:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        title:
+                          type: string
+                        url:
+                          type: string
+                        publisher:
+                          type: string
+                        rating:
+                          type: string
+                        date:
+                          type: string
+                    description: Verified sources
+                  language:
+                    type: string
+                    description: Detected language
+                  mode:
+                    type: string
+                    description: Verification mode used
+                  timestamp:
+                    type: string
+                    format: date-time
+                  metrics:
+                    type: object
+                    properties:
+                      latency_ms:
+                        type: number
+                        description: Request latency in milliseconds
+                      cost_usd:
+                        type: number
+                        description: Estimated cost in USD
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  detail:
+                    type: string
+                    example: "Invalid request parameters"
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  detail:
+                    type: string
+                    example: "Invalid API key"
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  detail:
+                    type: string
+                    example: "Verification failed"
+
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: Authorization
+      description: Bearer token authentication
+
+  schemas:
+    Error:
+      type: object
+      properties:
+        detail:
+          type: string
+          description: Error message
+
+security:
+  - ApiKeyAuth: []
+
+x-google-backend:
+  address: https://truthlens-api-{hash}-uc.a.run.app
+
+x-google-endpoints:
+  - name: truthlens-api.endpoints.{project-id}.cloud.goog
+    allowCors: true

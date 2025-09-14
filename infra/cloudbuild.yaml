@@ -1,0 +1,73 @@
+# Cloud Build configuration for TruthLens API
+steps:
+  # Build the container image
+  - name: 'gcr.io/cloud-builders/docker'
+    args: [
+      'build',
+      '-t', 'gcr.io/$PROJECT_ID/truthlens-api:$COMMIT_SHA',
+      '-t', 'gcr.io/$PROJECT_ID/truthlens-api:latest',
+      './api'
+    ]
+
+  # Push the container image to Container Registry
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'gcr.io/$PROJECT_ID/truthlens-api:$COMMIT_SHA']
+
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'gcr.io/$PROJECT_ID/truthlens-api:latest']
+
+  # Deploy container image to Cloud Run
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args: [
+      'run', 'deploy', 'truthlens-api',
+      '--image', 'gcr.io/$PROJECT_ID/truthlens-api:$COMMIT_SHA',
+      '--region', 'us-central1',
+      '--platform', 'managed',
+      '--allow-unauthenticated',
+      '--memory', '2Gi',
+      '--cpu', '2',
+      '--min-instances', '0',
+      '--max-instances', '10',
+      '--concurrency', '100',
+      '--timeout', '300',
+      '--port', '8080',
+      '--set-env-vars', 'GOOGLE_CLOUD_PROJECT=$PROJECT_ID',
+      '--set-env-vars', 'GOOGLE_CLOUD_LOCATION=us-central1',
+      '--set-env-vars', 'STORAGE_BUCKET=truthlens-evidence',
+      '--set-env-vars', 'BIGQUERY_DATASET=truthlens_logs',
+      '--set-env-vars', 'BIGQUERY_TABLE=verification_requests'
+    ]
+
+  # Deploy API Gateway configuration
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args: [
+      'api-gateway', 'api-configs', 'create', 'truthlens-config',
+      '--api=truthlens-api',
+      '--openapi-spec=./infra/api-gateway.yaml',
+      '--backend-auth-service-account=truthlens-api@$PROJECT_ID.iam.gserviceaccount.com'
+    ]
+
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args: [
+      'api-gateway', 'gateways', 'create', 'truthlens-gateway',
+      '--api=truthlens-api',
+      '--api-config=truthlens-config',
+      '--location=us-central1'
+    ]
+
+# Store images in Google Container Registry
+images:
+  - 'gcr.io/$PROJECT_ID/truthlens-api:$COMMIT_SHA'
+  - 'gcr.io/$PROJECT_ID/truthlens-api:latest'
+
+# Build options
+options:
+  machineType: 'E2_HIGHCPU_8'
+  diskSizeGb: 100
+  logging: CLOUD_LOGGING_ONLY
+
+# Timeout
+timeout: '1200s'
