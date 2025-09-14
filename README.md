@@ -40,8 +40,8 @@ TruthLens/
 git clone https://github.com/channi23/OrangeLens.git
 cd OrangeLens
 
-# Setup development environment
-./scripts/setup-dev.sh
+# Setup your specific project (orange-lens-472108)
+./scripts/setup-orange-lens.sh
 
 # Start development servers
 ./scripts/start-dev.sh
@@ -112,8 +112,8 @@ echo "REACT_APP_API_URL=http://localhost:8080" > .env
 
 ### Deploy to Production
 ```bash
-# Set your project ID
-export PROJECT_ID="your-project-id"
+# Set your project ID (already configured)
+export PROJECT_ID="orange-lens-472108"
 
 # Deploy everything
 ./scripts/deploy.sh

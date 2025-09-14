@@ -6,7 +6,7 @@
 set -e
 
 # Configuration
-PROJECT_ID=${PROJECT_ID:-"truthlens-project"}
+PROJECT_ID=${PROJECT_ID:-"orange-lens-472108"}
 REGION=${REGION:-"us-central1"}
 SERVICE_NAME="truthlens-api"
 BUCKET_NAME="truthlens-evidence"

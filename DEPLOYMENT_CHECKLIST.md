@@ -22,17 +22,13 @@ gcloud auth login
 gcloud auth application-default login
 ```
 
-### 3. Create GCP Project
+### 3. Set Your Project (Already Created!)
 ```bash
-# Create new project (replace with your desired project ID)
-gcloud projects create truthlens-project-$(date +%s)
+# Your project is already created: orange-lens-472108
+gcloud config set project orange-lens-472108
 
-# Set as default project
-gcloud config set project truthlens-project-$(date +%s)
-
-# Enable billing (you'll need to do this in the console)
-echo "Go to: https://console.cloud.google.com/billing"
-echo "Link your project to a billing account"
+# Verify project is set correctly
+gcloud config get-value project
 ```
 
 ### 4. Enable Required APIs
@@ -70,12 +66,12 @@ gcloud services enable \
 
 ### 1. Update Project Configuration
 ```bash
-# Set your project ID
-export PROJECT_ID="your-project-id"
+# Your project ID is already set: orange-lens-472108
+export PROJECT_ID="orange-lens-472108"
 echo "export PROJECT_ID=\"$PROJECT_ID\"" >> ~/.zshrc
 
-# Update deployment script
-sed -i "s/truthlens-project/$PROJECT_ID/g" scripts/deploy.sh
+# Verify project is set correctly
+gcloud config get-value project
 ```
 
 ### 2. Run Deployment Script

@@ -3,6 +3,7 @@
 variable "project_id" {
   description = "GCP Project ID"
   type        = string
+  default     = "orange-lens-472108"
 }
 
 variable "region" {
