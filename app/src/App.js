@@ -17,7 +17,9 @@ function App() {
   useEffect(() => {
     // Register service worker
     if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('/sw.js');
+      // Use PUBLIC_URL so the service worker resolves correctly on sub-path hosting
+      const swPath = `${process.env.PUBLIC_URL || '.'}/sw.js`;
+      navigator.serviceWorker.register(swPath);
     }
 
     // Handle share target data

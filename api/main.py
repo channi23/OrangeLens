@@ -2,8 +2,8 @@ import os
 import json
 import logging
 import asyncio
-from datetime import datetime
-from typing import Dict, Any, Optional
+from datetime import datetime, timedelta
+from typing import Dict, Any, Optional, List
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -11,7 +11,7 @@ from google.cloud import aiplatform
 from google.cloud import storage
 from google.cloud import bigquery
 from google.cloud import secretmanager
-from vertexai.generative_models import GenerativeModel
+from vertexai.generative_models import GenerativeModel, Part
 import vertexai
 import requests
 import hashlib
@@ -43,6 +43,8 @@ LOCATION = os.getenv("GOOGLE_CLOUD_LOCATION", "us-central1")
 BUCKET_NAME = os.getenv("STORAGE_BUCKET", "truthlens-evidence-orange-lens-472108")
 DATASET_ID = os.getenv("BIGQUERY_DATASET", "truthlens_logs")
 TABLE_ID = os.getenv("BIGQUERY_TABLE", "verification_requests")
+SERPER_API_KEY = os.getenv("SERPER_API_KEY", "")
+SERPER_API_ENDPOINT = os.getenv("SERPER_API_ENDPOINT", "https://google.serper.dev/news")
 
 # Initialize clients
 # Set API version to beta for Gemini 1.5 models (Vertex path kept for backwards compatibility)
@@ -67,6 +69,188 @@ def get_secret(secret_name: str) -> str:
         logging.error(f"Failed to get secret {secret_name}: {e}")
         return ""
 
+
+def _guess_extension(mime_type: str) -> str:
+    mapping = {
+        "image/jpeg": ".jpg",
+        "image/jpg": ".jpg",
+        "image/png": ".png",
+        "image/webp": ".webp",
+    }
+    return mapping.get((mime_type or "").lower(), ".jpg")
+
+
+def _parse_json_from_text(text_value: str) -> Optional[Dict[str, Any]]:
+    if not text_value:
+        return None
+    s = text_value.strip()
+    if s.startswith("```"):
+        s = re.sub(r"^```[a-zA-Z]*\s*", "", s)
+        s = re.sub(r"\s*```$", "", s)
+    try:
+        return json.loads(s)
+    except Exception:
+        pass
+    try:
+        start = s.find('{')
+        end = s.rfind('}')
+        if start != -1 and end != -1 and end > start:
+            return json.loads(s[start:end+1])
+    except Exception:
+        pass
+    return None
+
+
+async def upload_image_to_bucket(image_bytes: bytes, mime_type: str, request_id: str) -> Optional[str]:
+    if not image_bytes:
+        return None
+    blob_name = f"images/{request_id}{_guess_extension(mime_type)}"
+    bucket = storage_client.bucket(BUCKET_NAME)
+    blob = bucket.blob(blob_name)
+    blob.upload_from_string(image_bytes, content_type=mime_type or "image/jpeg")
+    return f"gs://{BUCKET_NAME}/{blob_name}"
+
+
+async def generate_image_caption(image_bytes: bytes, language: str, image_mime: str) -> str:
+    if not image_bytes:
+        return ""
+    model = GenerativeModel(GEMINI_MODEL)
+    caption_prompt = {
+        "en": "Describe the image in one neutral sentence so it can be fact checked.",
+        "hi": "तथ्य जांच के लिए छवि का एक निष्पक्ष वाक्य में वर्णन करें।",
+        "ta": "தகவலை சரிபார்க்க பயன்படுத்த படத்தை ஒரு குறுகிய நடுநிலை வாக்கியமாக விளக்கவும்.",
+    }.get(language, "Describe the image in one neutral sentence so it can be fact checked.")
+    response = model.generate_content([
+        Part.from_text(caption_prompt),
+        Part.from_bytes(image_bytes, mime_type=image_mime or "image/jpeg"),
+    ])
+    return (response.text or "").strip()
+
+
+async def search_news_fallback(query: str, language: str) -> List[Dict[str, Any]]:
+    if not SERPER_API_KEY or not query:
+        return []
+    headers = {"X-API-KEY": SERPER_API_KEY, "Content-Type": "application/json"}
+    payload = {"q": query, "num": 5, "hl": language or "en"}
+    try:
+        resp = requests.post(SERPER_API_ENDPOINT, headers=headers, json=payload, timeout=15)
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as exc:
+        logging.error(f"News search failed: {exc}")
+        return []
+
+    entries: List[Dict[str, Any]] = []
+    for item in data.get("news", [])[:5]:
+        entries.append({
+            "title": item.get("title", ""),
+            "snippet": item.get("snippet", item.get("description", "")),
+            "url": item.get("link") or item.get("sourceUrl", ""),
+            "source": item.get("source", ""),
+        })
+    return entries
+
+
+async def retrieve_supporting_evidence(claim_text: str, language: str) -> Dict[str, Any]:
+    fact_data = await check_fact_check_api(claim_text, language)
+    citations = fact_data.get("citations", [])
+    fact_check_results = fact_data.get("fact_check_results", [])
+
+    evidence_entries: List[Dict[str, Any]] = []
+    for item in citations[:5]:
+        evidence_entries.append({
+            "title": item.get("title", ""),
+            "snippet": item.get("rating", ""),
+            "url": item.get("url", ""),
+            "source": item.get("publisher", ""),
+        })
+
+    if not evidence_entries:
+        fallback_entries = await search_news_fallback(claim_text, language)
+        evidence_entries.extend(fallback_entries)
+    else:
+        fallback_entries = []
+
+    return {
+        "evidence": evidence_entries,
+        "citations": citations or fallback_entries,
+        "fact_check_results": fact_check_results,
+    }
+
+
+async def process_verification_request(
+    request_id: str,
+    text: str,
+    language: str,
+    mode: str,
+    image_bytes: Optional[bytes],
+    image_mime: str,
+) -> Dict[str, Any]:
+    language = language or "en"
+    if language == "auto":
+        language = detect_language(text)
+
+    claim_text = (text or "").strip()
+    image_uri = None
+    if image_bytes:
+        image_uri = await upload_image_to_bucket(image_bytes, image_mime, request_id)
+        if not claim_text:
+            caption = await generate_image_caption(image_bytes, language, image_mime)
+            claim_text = caption.strip()
+
+    if not claim_text:
+        raise HTTPException(status_code=400, detail="Unable to determine claim text from request")
+
+    evidence_bundle = await retrieve_supporting_evidence(claim_text, language)
+    evidence_entries = evidence_bundle.get("evidence", [])
+    citations_raw = evidence_bundle.get("citations", [])
+    fact_check_raw = evidence_bundle.get("fact_check_results", [])
+
+    normalized_fact_checks: List[Dict[str, Any]] = []
+    for claim in fact_check_raw:
+        claim_text_fc = claim.get("text", "")
+        for review in claim.get("claimReview", []):
+            reviewer = review.get("publisher", {})
+            if isinstance(reviewer, dict):
+                reviewer_name = reviewer.get("name", "")
+            else:
+                reviewer_name = reviewer or ""
+            normalized_fact_checks.append({
+                "claim": claim_text_fc or review.get("title", ""),
+                "reviewer": reviewer_name,
+                "url": review.get("url", ""),
+                "rating": review.get("textualRating", ""),
+            })
+
+    gemini_result = await verify_with_gemini(
+        claim_text,
+        language,
+        evidence_entries,
+        normalized_fact_checks,
+        image_bytes=image_bytes,
+        image_mime=image_mime,
+    )
+
+    if not gemini_result.get("citations"):
+        citation_urls = [item.get("url") for item in evidence_entries if item.get("url")]
+        gemini_result["citations"] = citation_urls
+
+    if not gemini_result.get("fact_check_results"):
+        gemini_result["fact_check_results"] = normalized_fact_checks
+
+    gemini_result.setdefault("language", language)
+    gemini_result.setdefault("mode", mode)
+    gemini_result.setdefault("timestamp", datetime.utcnow().isoformat())
+
+    return {
+        "result": gemini_result,
+        "claim_text": claim_text,
+        "image_uri": image_uri,
+        "evidence_entries": evidence_entries,
+        "fact_check_results": normalized_fact_checks,
+        "citations_raw": citations_raw,
+    }
+
 # API Key validation
 async def verify_api_key(credentials: HTTPAuthorizationCredentials = Depends(security)):
     """Verify API key"""
@@ -89,169 +273,79 @@ def detect_language(text: str) -> str:
 # Gemini AI integration
 # Allow overriding the model via environment variable
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-1.5-flash-002")
-GEMINI_MODE = os.getenv("GEMINI_MODE", "express")  # express | vertex
+GEMINI_MODE = os.getenv("GEMINI_MODE", "vertex")  # vertex recommended (supports text+image)
 try:
     logging.error(f"Using GEMINI_MODEL={GEMINI_MODEL}, GEMINI_MODE={GEMINI_MODE}")
 except Exception:
     pass
 
-def _get_gemini_api_key() -> str:
-    """Get Gemini Express API key from env or Secret Manager."""
-    key = os.getenv("GEMINI_API_KEY", "")
-    if key:
-        return key
-    return get_secret("gemini-express-api-key")
-
-async def call_gemini_express(text: str, language: str = "en") -> Dict[str, Any]:
-    """Call Gemini via Generative Language (Express) API and return raw response JSON."""
+async def verify_with_gemini(
+    claim_text: str,
+    language: str,
+    evidence: List[Dict[str, Any]],
+    fact_check_results: List[Dict[str, Any]],
+    image_bytes: Optional[bytes] = None,
+    image_mime: str = "image/jpeg",
+) -> Dict[str, Any]:
+    """Verify claim using Vertex Gemini with optional evidence and image context."""
     try:
-        prompts = {
-            "en": f"""
-            Analyze the following claim for factual accuracy and provide a JSON response.
-            Claim: \"{text}\"
-            Respond ONLY with JSON keys: verdict (true|false|misleading|unverified), confidence (0..1), explanation, key_facts (array), reasoning
-            """.strip(),
-            "hi": f"""
-            निम्नलिखित दावे का विश्लेषण करें और केवल JSON में उत्तर दें: verdict, confidence, explanation, key_facts, reasoning
-            दावा: \"{text}\"
-            """.strip(),
-            "ta": f"""
-            பின்வரும் கூற்றை பகுப்பாய்வு செய்து JSON வடிவில் மட்டுமே பதிலளிக்கவும்: verdict, confidence, explanation, key_facts, reasoning
-            கூற்று: \"{text}\"
-            """.strip(),
-        }
-        user_text = prompts.get(language, prompts["en"])
+        evidence_section = "\n".join([
+            f"{idx + 1}. {item.get('title','')} ({item.get('source','')}) - {item.get('snippet','')}\nSource: {item.get('url','')}"
+            for idx, item in enumerate(evidence[:5])
+        ]) or "No external evidence retrieved."
 
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
-        api_key = _get_gemini_api_key()
-        if not api_key:
-            raise RuntimeError("Missing GEMINI_API_KEY or Secret gemini-express-api-key")
+        fact_check_section = "\n".join([
+            f"- {res.get('claim','')} ({res.get('publisher','') or res.get('reviewer','')}) -> {res.get('textualRating') or res.get('rating','')} ({res.get('url','')})"
+            for res in fact_check_results[:5]
+        ]) or "No fact check reviews found."
 
-        payload = {
-            "contents": [
-                {
-                    "role": "user",
-                    "parts": [{"text": user_text}],
-                }
-            ]
-        }
-        params = {"key": api_key}
-        headers = {"Content-Type": "application/json"}
-        resp = requests.post(url, params=params, headers=headers, json=payload, timeout=30)
-        resp.raise_for_status()
-        return resp.json()
-    except Exception as e:
-        logging.error(f"Gemini Express call failed: {e}")
-        raise HTTPException(status_code=500, detail="Gemini Express call failed")
-async def verify_with_gemini(text: str, image_data: Optional[bytes] = None, language: str = "en") -> Dict[str, Any]:
-    """Verify claim using Gemini (Express or Vertex)."""
-    try:
-        # Construct prompt based on language
-        prompts = {
-            "en": f"""
-            Analyze the following claim for factual accuracy and provide a JSON response:
-            
-            Claim: "{text}"
-            
-            Respond with a JSON object containing:
-            - verdict: "true", "false", "misleading", or "unverified"
-            - confidence: float between 0.0 and 1.0
-            - explanation: detailed explanation of your reasoning
-            - key_facts: array of key facts you identified
-            - reasoning: step-by-step analysis
-            
-            Be objective, cite specific evidence, and explain your confidence level.
-            """,
-            "hi": f"""
-            निम्नलिखित दावे का तथ्यात्मक सटीकता के लिए विश्लेषण करें और JSON प्रतिक्रिया दें:
-            
-            दावा: "{text}"
-            
-            JSON ऑब्जेक्ट के साथ प्रतिक्रिया दें जिसमें शामिल है:
-            - verdict: "true", "false", "misleading", या "unverified"
-            - confidence: 0.0 और 1.0 के बीच float
-            - explanation: आपके तर्क की विस्तृत व्याख्या
-            - key_facts: आपके द्वारा पहचाने गए मुख्य तथ्यों की सरणी
-            - reasoning: चरण-दर-चरण विश्लेषण
-            
-            वस्तुनिष्ठ रहें, विशिष्ट साक्ष्य का हवाला दें, और अपने आत्मविश्वास स्तर की व्याख्या करें।
-            """,
-            "ta": f"""
-            பின்வரும் கூற்றின் உண்மைத் துல்லியத்தை பகுப்பாய்வு செய்து JSON பதிலை வழங்கவும்:
-            
-            கூற்று: "{text}"
-            
-            JSON பொருளுடன் பதிலளிக்கவும்:
-            - verdict: "true", "false", "misleading", அல்லது "unverified"
-            - confidence: 0.0 மற்றும் 1.0 க்கு இடையே float
-            - explanation: உங்கள் பகுத்தறிவின் விரிவான விளக்கம்
-            - key_facts: நீங்கள் அடையாளம் கண்ட முக்கிய உண்மைகளின் வரிசை
-            - reasoning: படிப்படியான பகுப்பாய்வு
-            
-            புறநிலையாக இருங்கள், குறிப்பிட்ட ஆதாரங்களை மேற்கோள் காட்டுங்கள், மற்றும் உங்கள் நம்பிக்கை நிலையை விளக்குங்கள்।
-            """
-        }
-        prompt = prompts.get(language, prompts["en"])
+        prompt = f"""
+You are TruthLens, an evidence-driven fact checking assistant.
+Analyze the claim and the provided evidence. Respond ONLY with JSON matching this schema:
+{{
+  "verdict": "true | false | misleading | unknown",
+  "confidence": number,
+  "explanation": string,
+  "key_facts": [string],
+  "citations": [string],
+  "fact_check_results": [{{"claim": string, "reviewer": string, "url": string, "rating": string}}],
+  "timestamp": string (ISO8601)
+}}
+Claim: "{claim_text}"
 
-        # Express path
-        if GEMINI_MODE.lower() == "express":
-            data = await call_gemini_express(text, language)
-            # Extract the generated text
-            try:
-                text_out = data["candidates"][0]["content"]["parts"][0]["text"]
-            except Exception:
-                text_out = ""
+Evidence:
+{evidence_section}
 
-            def parse_json_from_text(t: str):
-                if not t:
-                    return None
-                s = t.strip()
-                # Remove triple backtick fences like ```json ... ```
-                if s.startswith("```"):
-                    s = re.sub(r"^```[a-zA-Z]*\s*", "", s)
-                    s = re.sub(r"\s*```$", "", s)
-                # Direct parse
-                try:
-                    return json.loads(s)
-                except Exception:
-                    pass
-                # Heuristic: extract first {...} block
-                try:
-                    start = s.find('{')
-                    end = s.rfind('}')
-                    if start != -1 and end != -1 and end > start:
-                        return json.loads(s[start:end+1])
-                except Exception:
-                    pass
-                return None
+Fact check summaries:
+{fact_check_section}
 
-            parsed = parse_json_from_text(text_out)
-            if parsed is not None:
-                return parsed
-            return {
-                "verdict": "unverified",
-                "confidence": 0.5,
-                "explanation": text_out or "Gemini Express returned no parsable JSON",
-                "key_facts": [],
-                "reasoning": "AI response could not be parsed as JSON"
-            }
+Rules:
+- Use only the evidence provided or well-established knowledge.
+- If evidence is insufficient, set verdict to "unknown" and confidence <= 0.4.
+- Include relevant URLs in the citations array.
+- Keep the explanation clear and concise.
+"""
 
-        # Vertex fallback
         model = GenerativeModel(GEMINI_MODEL)
-        content = [prompt]
-        if image_data:
-            content.append({"mime_type": "image/jpeg", "data": image_data})
-        response = model.generate_content(content)
-        try:
-            return json.loads(response.text)
-        except json.JSONDecodeError:
-            return {
-                "verdict": "unverified",
-                "confidence": 0.5,
-                "explanation": response.text,
-                "key_facts": [],
-                "reasoning": "AI response could not be parsed as JSON"
-            }
+        parts = [Part.from_text(prompt)]
+        if image_bytes:
+            parts.append(Part.from_image_bytes(image_bytes=image_bytes))
+        response = model.generate_content(parts)
+
+        model_text = getattr(response, "text", "")
+        parsed = _parse_json_from_text(model_text)
+        if parsed is not None:
+            parsed.setdefault("timestamp", datetime.utcnow().isoformat())
+            return parsed
+        return {
+            "verdict": "unverified",
+            "confidence": 0.5,
+            "explanation": model_text or "Gemini returned no parsable JSON",
+            "key_facts": [],
+            "citations": [],
+            "fact_check_results": [],
+            "timestamp": datetime.utcnow().isoformat()
+        }
             
     except Exception as e:
         logging.error(f"Gemini verification failed: {e}")
@@ -305,15 +399,21 @@ async def check_fact_check_api(text: str, language: str = "en") -> Dict[str, Any
         return {"citations": [], "fact_check_results": []}
 
 # Storage operations
-async def store_evidence(request_id: str, image_data: Optional[bytes], response_data: Dict[str, Any]):
+async def store_evidence(
+    request_id: str,
+    image_data: Optional[bytes],
+    response_data: Dict[str, Any],
+    existing_image_uri: Optional[str] = None,
+    image_mime: str = "image/jpeg",
+):
     """Store evidence in Cloud Storage"""
     try:
         bucket = storage_client.bucket(BUCKET_NAME)
         
         # Store image if provided
-        if image_data:
-            image_blob = bucket.blob(f"images/{request_id}.jpg")
-            image_blob.upload_from_string(image_data, content_type="image/jpeg")
+        if image_data and not existing_image_uri:
+            image_blob = bucket.blob(f"images/{request_id}{_guess_extension(image_mime)}")
+            image_blob.upload_from_string(image_data, content_type=image_mime or "image/jpeg")
         
         # Store response
         response_blob = bucket.blob(f"responses/{request_id}.json")
@@ -360,77 +460,26 @@ async def health_check():
 
 @app.post("/v1/verify-test")
 async def verify_claim_test(request: dict):
-    """Test endpoint: call Gemini Express and return normalized verification format."""
+    """Test endpoint: run verification pipeline without authentication."""
     request_id = str(uuid.uuid4())
     try:
         text = request.get("text", "")
         mode = request.get("mode", "fast")
         language = request.get("language", "en")
-        if language == "auto":
-            language = detect_language(text)
-
-        # Call Express and extract model text
-        data = await call_gemini_express(text, language)
-        try:
-            model_text = data["candidates"][0]["content"]["parts"][0]["text"]
-        except Exception:
-            model_text = ""
-
-        # Try to parse model_text as JSON per our contract (strip code fences if present)
-        def parse_json_from_text(t: str):
-            if not t:
-                return None
-            s = t.strip()
-            if s.startswith("```"):
-                s = re.sub(r"^```[a-zA-Z]*\s*", "", s)
-                s = re.sub(r"\s*```$", "", s)
-            try:
-                return json.loads(s)
-            except Exception:
-                pass
-            try:
-                start = s.find('{')
-                end = s.rfind('}')
-                if start != -1 and end != -1 and end > start:
-                    return json.loads(s[start:end+1])
-            except Exception:
-                pass
-            return None
-
-        payload = parse_json_from_text(model_text) or {
-            "verdict": "unverified",
-            "confidence": 0.5,
-            "explanation": model_text or "Gemini returned no parsable JSON",
-            "key_facts": [],
-            "reasoning": "AI response could not be parsed as JSON"
-        }
-
-        citations = []
-        fact_check_results = []
-        should_call_fact_check = (
-            mode == "deep" or payload.get("confidence", 0) < 0.75
-        ) and text.strip()
-
-        if should_call_fact_check:
-            fact_check_data = await check_fact_check_api(text, language)
-            citations = fact_check_data.get("citations", [])
-            fact_check_results = fact_check_data.get("fact_check_results", [])
-
-        # Return in the format the frontend expects
-        return {
-            "request_id": request_id,
-            "verdict": payload.get("verdict", "unverified"),
-            "confidence": payload.get("confidence", 0.5),
-            "explanation": payload.get("explanation", ""),
-            "key_facts": payload.get("key_facts", []),
-            "reasoning": payload.get("reasoning", ""),
-            "citations": citations,
-            "fact_check_results": fact_check_results,
-            "timestamp": datetime.utcnow().isoformat()
-        }
+        bundle = await process_verification_request(
+            request_id=request_id,
+            text=text,
+            language=language,
+            mode=mode,
+            image_bytes=None,
+            image_mime="image/jpeg",
+        )
+        response_payload = bundle["result"].copy()
+        response_payload["request_id"] = request_id
+        return response_payload
     except Exception as e:
         logging.error(f"/verify-test failed: {e}")
-        return {"request_id": request_id, "error": "Express call failed", "verdict": "error"}
+        return {"request_id": request_id, "error": "Verification failed", "verdict": "error"}
 
 @app.post("/v1/verify-image-test")
 async def verify_image_test(
@@ -439,71 +488,30 @@ async def verify_image_test(
     mode: str = Form("fast"),
     image: Optional[UploadFile] = File(None)
 ):
-    """Unauthenticated image-friendly test endpoint. Uses Express, ignores image content for now."""
+    """Unauthenticated image-friendly test endpoint. Accepts optional image attachments."""
     request_id = str(uuid.uuid4())
     try:
-        if language == "auto":
-            language = detect_language(text)
+        image_bytes = None
+        image_mime = "image/jpeg"
+        if image:
+            image_bytes = await image.read()
+            if getattr(image, "content_type", None):
+                image_mime = image.content_type or image_mime
 
-        data = await call_gemini_express(text, language)
-        try:
-            model_text = data["candidates"][0]["content"]["parts"][0]["text"]
-        except Exception:
-            model_text = ""
-
-        def parse_json_from_text(t: str):
-            if not t:
-                return None
-            s = t.strip()
-            if s.startswith("```"):
-                s = re.sub(r"^```[a-zA-Z]*\\s*", "", s)
-                s = re.sub(r"\\s*```$", "", s)
-            try:
-                return json.loads(s)
-            except Exception:
-                pass
-            try:
-                start = s.find('{')
-                end = s.rfind('}')
-                if start != -1 and end != -1 and end > start:
-                    return json.loads(s[start:end+1])
-            except Exception:
-                pass
-            return None
-
-        payload = parse_json_from_text(model_text) or {
-            "verdict": "unverified",
-            "confidence": 0.5,
-            "explanation": model_text or "Gemini returned no parsable JSON",
-            "key_facts": [],
-            "reasoning": "AI response could not be parsed as JSON"
-        }
-
-        citations = []
-        fact_check_results = []
-        should_call_fact_check = (
-            mode == "deep" or payload.get("confidence", 0) < 0.75
-        ) and text.strip()
-
-        if should_call_fact_check:
-            fact_check_data = await check_fact_check_api(text, language)
-            citations = fact_check_data.get("citations", [])
-            fact_check_results = fact_check_data.get("fact_check_results", [])
-
-        return {
-            "request_id": request_id,
-            "verdict": payload.get("verdict", "unverified"),
-            "confidence": payload.get("confidence", 0.5),
-            "explanation": payload.get("explanation", ""),
-            "key_facts": payload.get("key_facts", []),
-            "reasoning": payload.get("reasoning", ""),
-            "citations": citations,
-            "fact_check_results": fact_check_results,
-            "timestamp": datetime.utcnow().isoformat()
-        }
+        bundle = await process_verification_request(
+            request_id=request_id,
+            text=text,
+            language=language,
+            mode=mode,
+            image_bytes=image_bytes,
+            image_mime=image_mime,
+        )
+        response_payload = bundle["result"].copy()
+        response_payload["request_id"] = request_id
+        return response_payload
     except Exception as e:
         logging.error(f"/verify-image-test failed: {e}")
-        return {"request_id": request_id, "error": "Express call failed", "verdict": "error"}
+        return {"request_id": request_id, "error": "Verification failed", "verdict": "error"}
 
 @app.post("/v1/verify")
 async def verify_claim(
@@ -523,37 +531,30 @@ async def verify_claim(
         if language == "auto":
             language = detected_lang
         
-        # Read image data if provided
         image_data = None
+        image_mime = "image/jpeg"
         if image:
+            if getattr(image, "content_type", None):
+                image_mime = image.content_type or image_mime
             image_data = await image.read()
-        
-        # Step 1: Gemini AI verification
-        gemini_result = await verify_with_gemini(text, image_data, language)
-        
-        # Step 2: Fact Check API (if confidence < 75% or mode is deep)
-        citations = []
-        fact_check_results = []
-        
-        if mode == "deep" or gemini_result.get("confidence", 0) < 0.75:
-            fact_check_data = await check_fact_check_api(text, language)
-            citations = fact_check_data.get("citations", [])
-            fact_check_results = fact_check_data.get("fact_check_results", [])
-        
-        # Step 3: Combine results
-        final_result = {
-            "request_id": request_id,
-            "verdict": gemini_result.get("verdict", "unverified"),
-            "confidence": gemini_result.get("confidence", 0.5),
-            "explanation": gemini_result.get("explanation", ""),
-            "key_facts": gemini_result.get("key_facts", []),
-            "reasoning": gemini_result.get("reasoning", ""),
-            "citations": citations,
-            "fact_check_results": fact_check_results,
-            "language": language,
-            "mode": mode,
-            "timestamp": datetime.utcnow().isoformat()
-        }
+
+        bundle = await process_verification_request(
+            request_id=request_id,
+            text=text,
+            language=language,
+            mode=mode,
+            image_bytes=image_data,
+            image_mime=image_mime,
+        )
+
+        final_result = bundle["result"].copy()
+        final_result.update(
+            {
+                "request_id": request_id,
+                "language": final_result.get("language", language),
+                "mode": final_result.get("mode", mode),
+            }
+        )
         
         # Calculate metrics
         latency = (datetime.utcnow() - start_time).total_seconds() * 1000
@@ -561,7 +562,7 @@ async def verify_claim(
         
         # Store evidence and log request
         await asyncio.gather(
-            store_evidence(request_id, image_data, final_result),
+            store_evidence(request_id, image_data, final_result, existing_image_uri=bundle.get("image_uri"), image_mime=image_mime),
             log_request(request_id, text, mode, language, 
                        final_result["verdict"], final_result["confidence"], 
                        latency, cost)

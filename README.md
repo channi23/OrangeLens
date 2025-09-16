@@ -92,9 +92,10 @@ cp config.env.example .env
 # Edit .env and set at least:
 # GOOGLE_CLOUD_PROJECT=local-dev
 # GOOGLE_CLOUD_LOCATION=us-central1
-# GEMINI_MODE=express
-# GEMINI_MODEL=gemini-1.5-flash-002
-# GEMINI_API_KEY=YOUR_GEMINI_API_KEY  # from AI Studio → API Keys
+# GEMINI_MODE=vertex
+# GEMINI_MODEL=gemini-2.5-flash-lite
+# SERPER_API_KEY=YOUR_SERPER_API_KEY   # optional news search fallback
+# GEMINI_API_KEY=YOUR_GEMINI_API_KEY  # only needed when using Express REST locally
 # FACT_CHECK_API_KEY=YOUR_FACT_CHECK_API_KEY  # optional (enables deep fact checks)
 ```
 2) Install and run
@@ -118,8 +119,9 @@ curl -X POST http://localhost:8080/v1/verify-image-test \
 ```
 
 Notes
-- Fast checks use Gemini Express via `GEMINI_API_KEY`.
-- Deep checks (or low confidence) can call Google Fact Check API when `FACT_CHECK_API_KEY` is provided (integration polishing is part of today’s tasks).
+- Gemini requests default to Vertex Gemini 2.5 Flash Lite (service account auth). Set `GEMINI_MODE=vertex` unless you specifically need the Express REST API.
+- Evidence retrieval first queries Google Fact Check Tools; if nothing is found, it falls back to a news search (Serper.dev) when `SERPER_API_KEY` is configured.
+- Deep checks (or low confidence) can call Google Fact Check API when `FACT_CHECK_API_KEY` is provided.
 
 #### Frontend PWA (React)
 1) Configure environment
