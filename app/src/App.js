@@ -43,6 +43,15 @@ function App() {
   const handleVerification = async () => {
     if (!claim.trim()) return;
 
+    if (mode === 'deep' && !API_KEY) {
+      setStep('');
+      setResult({
+        error: 'Deep verification requires a configured TruthLens API key.',
+        verdict: 'error'
+      });
+      return;
+    }
+
     setIsVerifying(true);
     setResult(null);
     setStep('Submitting...');
@@ -53,8 +62,26 @@ function App() {
       setStep('Calling Gemini AI...');
 
       let response;
-      if (image) {
-        // Use multipart to hit unauthenticated image test endpoint
+      const shouldUseSecureEndpoint = Boolean(API_KEY);
+
+      if (shouldUseSecureEndpoint) {
+        const form = new FormData();
+        form.append('text', claim);
+        form.append('mode', mode);
+        form.append('language', language);
+        if (image) {
+          form.append('image', image);
+        }
+
+        response = await fetch(`${API_BASE_URL}/v1/verify`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${API_KEY}`
+          },
+          body: form
+        });
+      } else if (image) {
+        // Use multipart to hit unauthenticated image test endpoint when API key is not available
         const form = new FormData();
         form.append('text', claim);
         form.append('mode', mode);
@@ -75,6 +102,10 @@ function App() {
         });
       }
 
+      if (!response.ok) {
+        throw new Error(`API responded with ${response.status}`);
+      }
+
       setStep('Checking Fact Database...');
       
       const data = await response.json();
@@ -82,7 +113,9 @@ function App() {
       setStep('Generating Verdict...');
       
       const latency = Date.now() - startTime;
-      setMetrics({ latency, cost: data.cost || 0 });
+      const apiLatency = data.metrics?.latency_ms ?? latency;
+      const apiCost = data.metrics?.cost_usd ?? data.cost ?? 0;
+      setMetrics({ latency: Math.round(apiLatency), cost: apiCost });
       
       setResult(data);
       setStep('Complete');

@@ -11,9 +11,9 @@ One-tap fact verification from any mobile app via the system Share sheet, with t
 TruthLens/
 ├── app/                    # Progressive Web App (React)
 │   ├── src/               # React source code
-│   ├── public/             # Static assets
+│   ├── public/             # Static assets (includes service worker)
 │   ├── manifest.json       # PWA manifest
-│   └── sw.js              # Service worker
+│   └── public/sw.js        # Service worker
 ├── api/                    # Backend API (Cloud Run)
 │   ├── main.py            # FastAPI application
 │   ├── requirements.txt   # Python dependencies
@@ -99,7 +99,9 @@ cp config.env.example .env
 ```
 2) Install and run
 ```bash
-python -m venv .venv && source .venv/bin/activate
+python3 -m venv .venv
+source .venv/bin/activate
+pip install --upgrade pip
 pip install -r requirements.txt
 uvicorn main:app --reload --host 0.0.0.0 --port 8080
 ```
@@ -137,10 +139,11 @@ npm start
 - Share text or an image to TruthLens; the app opens with the text prefilled and image attached.
 - Image flows use `POST /v1/verify-image-test` locally (no API key needed).
 
-### 3. Test the API
+### 3. Test the API (optional)
 ```bash
 ./scripts/test-api.sh
 ```
+> This helper script requires `jq` for pretty-printing JSON. Install it via `brew install jq` (macOS) or your distribution's package manager.
 
 ## 🚀 Deployment
 
@@ -214,7 +217,7 @@ TruthLens/
 │   ├── src/App.css          # Styles
 │   ├── public/index.html    # HTML template
 │   ├── manifest.json        # PWA manifest
-│   └── sw.js               # Service worker
+│   └── public/sw.js        # Service worker
 ├── api/                     # Python FastAPI
 │   ├── main.py             # Main API application
 │   ├── simple_main.py      # Simple development server

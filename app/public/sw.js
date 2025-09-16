@@ -19,6 +19,18 @@ self.addEventListener('install', (event) => {
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
 
+  if (url.pathname.startsWith('/shared/')) {
+    event.respondWith((async () => {
+      const cache = await caches.open(SHARED_CACHE);
+      const cachedResponse = await cache.match(url.pathname);
+      if (cachedResponse) {
+        return cachedResponse;
+      }
+      return new Response('', { status: 404 });
+    })());
+    return;
+  }
+
   // Handle Web Share Target POST to /verify by redirecting to main app with params and caching shared image
   if (url.pathname === '/verify' && event.request.method === 'POST') {
     event.respondWith((async () => {
@@ -59,15 +71,16 @@ self.addEventListener('fetch', (event) => {
 // Activate event - clean up old caches
 self.addEventListener('activate', (event) => {
   event.waitUntil(
-    caches.keys().then((cacheNames) => {
-      return Promise.all(
+    caches.keys()
+      .then((cacheNames) => Promise.all(
         cacheNames.map((cacheName) => {
-          if (cacheName !== CACHE_NAME) {
+          if (![CACHE_NAME, SHARED_CACHE].includes(cacheName)) {
             return caches.delete(cacheName);
           }
+          return undefined;
         })
-      );
-    })
+      ))
+      .then(() => self.clients.claim())
   );
 });
 

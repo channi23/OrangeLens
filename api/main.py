@@ -364,6 +364,7 @@ async def verify_claim_test(request: dict):
     request_id = str(uuid.uuid4())
     try:
         text = request.get("text", "")
+        mode = request.get("mode", "fast")
         language = request.get("language", "en")
         if language == "auto":
             language = detect_language(text)
@@ -404,6 +405,17 @@ async def verify_claim_test(request: dict):
             "reasoning": "AI response could not be parsed as JSON"
         }
 
+        citations = []
+        fact_check_results = []
+        should_call_fact_check = (
+            mode == "deep" or payload.get("confidence", 0) < 0.75
+        ) and text.strip()
+
+        if should_call_fact_check:
+            fact_check_data = await check_fact_check_api(text, language)
+            citations = fact_check_data.get("citations", [])
+            fact_check_results = fact_check_data.get("fact_check_results", [])
+
         # Return in the format the frontend expects
         return {
             "request_id": request_id,
@@ -412,7 +424,8 @@ async def verify_claim_test(request: dict):
             "explanation": payload.get("explanation", ""),
             "key_facts": payload.get("key_facts", []),
             "reasoning": payload.get("reasoning", ""),
-            "citations": [],
+            "citations": citations,
+            "fact_check_results": fact_check_results,
             "timestamp": datetime.utcnow().isoformat()
         }
     except Exception as e:
@@ -423,6 +436,7 @@ async def verify_claim_test(request: dict):
 async def verify_image_test(
     text: str = Form(""),
     language: str = Form("en"),
+    mode: str = Form("fast"),
     image: Optional[UploadFile] = File(None)
 ):
     """Unauthenticated image-friendly test endpoint. Uses Express, ignores image content for now."""
@@ -465,6 +479,17 @@ async def verify_image_test(
             "reasoning": "AI response could not be parsed as JSON"
         }
 
+        citations = []
+        fact_check_results = []
+        should_call_fact_check = (
+            mode == "deep" or payload.get("confidence", 0) < 0.75
+        ) and text.strip()
+
+        if should_call_fact_check:
+            fact_check_data = await check_fact_check_api(text, language)
+            citations = fact_check_data.get("citations", [])
+            fact_check_results = fact_check_data.get("fact_check_results", [])
+
         return {
             "request_id": request_id,
             "verdict": payload.get("verdict", "unverified"),
@@ -472,7 +497,8 @@ async def verify_image_test(
             "explanation": payload.get("explanation", ""),
             "key_facts": payload.get("key_facts", []),
             "reasoning": payload.get("reasoning", ""),
-            "citations": [],
+            "citations": citations,
+            "fact_check_results": fact_check_results,
             "timestamp": datetime.utcnow().isoformat()
         }
     except Exception as e:

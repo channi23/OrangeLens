@@ -13,9 +13,9 @@ TruthLens/
 │   ├── README.md                      # PWA documentation
 │   ├── package.json                   # Node.js dependencies
 │   ├── manifest.json                  # PWA manifest
-│   ├── sw.js                          # Service worker
 │   ├── public/
-│   │   └── index.html                 # HTML template
+│   │   ├── index.html                 # HTML template
+│   │   └── sw.js                      # Service worker
 │   └── src/
 │       ├── App.js                     # Main React component
 │       └── App.css                    # Styles
@@ -51,7 +51,7 @@ TruthLens/
 - **Deployment**: Firebase Hosting or any static hosting
 - **Key Files**:
   - `manifest.json`: PWA configuration
-  - `sw.js`: Service worker for offline support
+  - `public/sw.js`: Service worker for offline support
   - `src/App.js`: Main application component
 
 ### Backend (API)
