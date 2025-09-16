@@ -81,24 +81,63 @@ cd OrangeLens
 ./scripts/setup-dev.sh
 ```
 
-### 2. Configure Environment Variables
+### 2. Run Locally (Backend + Frontend)
+Follow these steps to run the API and PWA locally for development.
+
+#### Backend API (FastAPI)
+1) Configure environment
 ```bash
-# API Configuration
 cd api
 cp config.env.example .env
-# Edit .env with your configuration
-
-# PWA Configuration
-cd ../app
-echo "REACT_APP_API_URL=http://localhost:8080" > .env
+# Edit .env and set at least:
+# GOOGLE_CLOUD_PROJECT=local-dev
+# GOOGLE_CLOUD_LOCATION=us-central1
+# GEMINI_MODE=express
+# GEMINI_MODEL=gemini-1.5-flash-002
+# GEMINI_API_KEY=YOUR_GEMINI_API_KEY  # from AI Studio → API Keys
+# FACT_CHECK_API_KEY=YOUR_FACT_CHECK_API_KEY  # optional (enables deep fact checks)
 ```
-
-### 3. Start Development Servers
+2) Install and run
 ```bash
-./scripts/start-dev.sh
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+uvicorn main:app --reload --host 0.0.0.0 --port 8080
+```
+3) Quick tests
+```bash
+# Fast (text)
+curl -X POST http://localhost:8080/v1/verify-test \
+  -H 'Content-Type: application/json' \
+  -d '{"text":"The Earth orbits the Sun.","language":"en"}'
+
+# Image (multipart, unauthenticated for dev)
+curl -X POST http://localhost:8080/v1/verify-image-test \
+  -F 'text=What is shown?' -F 'language=en' -F 'image=@/path/to/photo.jpg'
 ```
 
-### 4. Test the API
+Notes
+- Fast checks use Gemini Express via `GEMINI_API_KEY`.
+- Deep checks (or low confidence) can call Google Fact Check API when `FACT_CHECK_API_KEY` is provided (integration polishing is part of today’s tasks).
+
+#### Frontend PWA (React)
+1) Configure environment
+```bash
+cd app
+echo "REACT_APP_API_URL=http://localhost:8080" > .env
+# Optional only if using authenticated /v1/verify locally:
+# echo "REACT_APP_API_KEY=YOUR_TRUTHLENS_API_KEY" >> .env
+```
+2) Start development server
+```bash
+npm install
+npm start
+```
+3) Mobile Share Target
+- Install the PWA to your device (Add to Home Screen).
+- Share text or an image to TruthLens; the app opens with the text prefilled and image attached.
+- Image flows use `POST /v1/verify-image-test` locally (no API key needed).
+
+### 3. Test the API
 ```bash
 ./scripts/test-api.sh
 ```
