@@ -28,6 +28,8 @@ TruthLens/
 
 ## 🚀 Quick Start
 
+<span style="font-size:2em; font-weight:bold;">### Linux/macOS Setup</span>
+
 ### Prerequisites
 - Node.js 16+
 - Python 3.11+
@@ -75,6 +77,8 @@ cd OrangeLens
 ~$200/month for 50k queries (covered by GCP credits)
 
 ## 🏃‍♂️ Getting Started
+
+<span style="font-size:2em; font-weight:bold;">### Linux/macOS</span>
 
 ### 1. Setup Development Environment
 ```bash
@@ -270,3 +274,144 @@ MIT License - see LICENSE file for details
 ---
 
 **TruthLens** - Making fact verification accessible, transparent, and reliable. 🔍✨
+
+---
+
+
+<span style="font-weight:bold;">------------------------------------------------------------------------------------------------- </span>
+
+<span style="font-size:2em; font-weight:bold;">🪟 Windows Setup Guide (Single Terminal)</span>
+
+This section explains how to set up and run the OrangeLens/TruthLens API locally on Windows using a single PowerShell terminal. It complements the Linux/macOS steps above and does not replace them.
+
+### 🖥️ Prerequisites
+
+- Python 3.12 (Download from https://www.python.org/downloads/ and check "Add Python to PATH")
+ the version has to be 3.12 as anything above will need you to separately install rust and cargo 
+- Google Cloud Project with required APIs enabled:
+  - Vertex AI API
+  - Cloud Storage API
+  - Secret Manager API
+  - BigQuery API
+- A Service Account with roles:
+  - BigQuery Data Editor
+  - BigQuery Job User
+  - Secret Manager Secret Accessor
+  - Storage Object Admin
+  - Vertex AI User
+- <span style="font-size:2em; font-weight:bold;">A JSON key for that service account (downloaded from Google Cloud Console)  this is essential and is needed to be kept as a secret dont include it with the project files</span>
+
+### 📦 Setup Instructions (Single Terminal)
+
+#### 1) Clone the repository
+
+```powershell
+git clone https://github.com/channi23/OrangeLens.git
+cd OrangeLens\api
+```
+
+#### 2) Create and activate virtual environment
+
+```powershell
+# Create a virtual environment with Python 3.12
+python -m venv .venv
+
+# If scripts are blocked in PowerShell, bypass for this session
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
+
+# Activate venv
+.\.venv\Scripts\Activate.ps1
+```
+#### 3) Install dependencies
+
+```powershell
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+```
+
+#### 4) Configure Google Application Credentials
+
+1. In Google Cloud Console → IAM & Admin → Service Accounts, select your API service account.
+2. Open Keys tab → Add Key → Create new key → choose JSON.
+3. Download the key and move it to a safe folder (not tracked by git):
+
+```powershell
+New-Item -ItemType Directory -Force "C:\Users\<YourName>\OrangeLensKeys"
+Move-Item "$env:USERPROFILE\Downloads\truth-lens-service-key.json" `
+          "C:\Users\<YourName>\OrangeLensKeys\truth-lens-service-key.json"
+```
+
+Add the folder to .gitignore to avoid committing keys:
+
+```
+# in .gitignore
+/OrangeLensKeys/*.json
+```
+
+Set the environment variable in the same terminal:
+
+```powershell
+$env:GOOGLE_APPLICATION_CREDENTIALS="C:\Users\<YourName>\OrangeLensKeys\truth-lens-service-key.json"
+```
+
+#### 5) Test Google Cloud connection (optional)
+
+Run this quick test in the same terminal:
+
+```powershell
+python - <<'PY'
+from google.cloud import storage
+client = storage.Client()
+print("✅ Connected to project:", client.project)
+PY
+```
+
+You should see your project ID (for example, orange-lens-472108).
+
+#### 6) Run the API (same terminal)
+
+```powershell
+uvicorn main:app --reload --host 127.0.0.1 --port 8080
+```
+
+When it starts, visit:
+
+- API Root: http://127.0.0.1:8080
+- Interactive Docs: http://127.0.0.1:8080/docs
+
+If you are also running the React app from `app/`, set `REACT_APP_API_URL=http://localhost:8080` and run `npm start` as documented above.
+
+### 🛠️ Troubleshooting
+- path to .JSON keys in gcloud (Googlecloud->console->secret manager-> create secret->now make the key or if key exists click on the three dots and copy the json into a file )
+- DefaultCredentialsError: Your default credentials were not found
+  - Double-check that `$env:GOOGLE_APPLICATION_CREDENTIALS` is set correctly in the current terminal.
+  - The path must point to your `.json` key file.
+  - If you open a new terminal, re-run `Activate.ps1` and set `$env:GOOGLE_APPLICATION_CREDENTIALS=...` again.
+
+- gcloud: command not found
+  - You do not need the gcloud CLI if you already have a JSON key file. Just set the environment variable as shown above.
+
+### 🔒 Security Notes
+
+- Never commit the `.json` key file to Git, or share it to other unauthorized people as they can manipulate the project files.
+- Rotate keys regularly and delete unused keys from GCP.
+- For production, consider Secret Manager or Workload Identity Federation instead of storing JSON keys locally.
+
+### ✅ One-command shortcut (optional)
+
+Create a `start-api.ps1` script in the project root with:
+
+```
+# start-api.ps1
+.\.venv\Scripts\Activate.ps1
+$env:GOOGLE_APPLICATION_CREDENTIALS="C:\Users\<YourName>\OrangeLensKeys\truth-lens-service-key.json"
+uvicorn main:app --reload --host 127.0.0.1 --port 8080
+```
+
+Then run everything with:
+
+```powershell
+.\start-api.ps1
+```
+
+This provides a single-terminal workflow: activate venv → set credentials → run server on port 8080.
