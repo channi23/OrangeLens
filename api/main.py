@@ -11,12 +11,21 @@ from google.cloud import aiplatform
 from google.cloud import storage
 from google.cloud import bigquery
 from google.cloud import secretmanager
-from vertexai.generative_models import GenerativeModel, Part
+from vertexai.preview.generative_models import GenerativeModel, Part
+from google.api_core.exceptions import InvalidArgument
 import vertexai
 import requests
 import hashlib
 import uuid
 import re
+from PIL import Image
+try:
+    from pillow_heif import register_heif_opener
+    register_heif_opener()
+except ImportError:
+    logging.warning("pillow-heif not available, HEIF/HEIC images will not be supported.")
+import pytesseract
+from urllib.parse import quote
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -100,31 +109,70 @@ def _parse_json_from_text(text_value: str) -> Optional[Dict[str, Any]]:
         pass
     return None
 
+# OCR extraction helper
+def extract_text_from_image_bytes(image_bytes: bytes) -> str:
+    try:
+        from io import BytesIO
+        image = Image.open(BytesIO(image_bytes))
+        image = image.convert("L")
+        text = pytesseract.image_to_string(image)
+        return text.strip()
+    except Exception as e:
+        logging.error(f"OCR extraction failed: {e}")
+        return ""
 
-async def upload_image_to_bucket(image_bytes: bytes, mime_type: str, request_id: str) -> Optional[str]:
+# --- OCR text refinement with Gemini ---
+async def refine_text_with_gemini(raw_text: str, language: str) -> str:
+    """Use Gemini to clean/refine OCR text into a concise claim."""
+    try:
+        model = GenerativeModel(GEMINI_MODEL)
+        prompt = f"Clean and refine the following OCR text into a single clear factual claim for fact-checking. If not possible, return it unchanged.\n\nText: {raw_text}"
+        response = model.generate_content([Part.from_text(prompt)])
+        return (response.text or raw_text).strip()
+    except Exception as e:
+        logging.error(f"Refinement failed: {e}")
+        return raw_text
+
+
+async def upload_image_to_bucket(image_bytes: bytes, mime_type: str, request_id: str) -> Optional[Dict[str, str]]:
     if not image_bytes:
         return None
     blob_name = f"images/{request_id}{_guess_extension(mime_type)}"
     bucket = storage_client.bucket(BUCKET_NAME)
     blob = bucket.blob(blob_name)
     blob.upload_from_string(image_bytes, content_type=mime_type or "image/jpeg")
-    return f"gs://{BUCKET_NAME}/{blob_name}"
+    try:
+        signed_url = blob.generate_signed_url(version="v4", expiration=timedelta(minutes=30), method="GET")
+    except Exception as exc:
+        logging.error(f"Failed to generate signed URL for {blob_name}: {exc}")
+        signed_url = None
+    return {
+        "gs_uri": f"gs://{BUCKET_NAME}/{blob_name}",
+        "signed_url": signed_url,
+    }
 
 
-async def generate_image_caption(image_bytes: bytes, language: str, image_mime: str) -> str:
-    if not image_bytes:
-        return ""
+async def generate_image_caption(image_bytes: bytes, language: str, image_mime: str = "image/jpeg") -> str:
     model = GenerativeModel(GEMINI_MODEL)
     caption_prompt = {
         "en": "Describe the image in one neutral sentence so it can be fact checked.",
         "hi": "तथ्य जांच के लिए छवि का एक निष्पक्ष वाक्य में वर्णन करें।",
         "ta": "தகவலை சரிபார்க்க பயன்படுத்த படத்தை ஒரு குறுகிய நடுநிலை வாக்கியமாக விளக்கவும்.",
     }.get(language, "Describe the image in one neutral sentence so it can be fact checked.")
-    response = model.generate_content([
-        Part.from_text(caption_prompt),
-        Part.from_bytes(image_bytes, mime_type=image_mime or "image/jpeg"),
-    ])
-    return (response.text or "").strip()
+    try:
+        parts = [Part.from_text(caption_prompt)]
+        if image_bytes:
+            parts.append(Part.from_data(data=image_bytes, mime_type=image_mime or "image/jpeg"))
+        # Explicit logging before sending parts to Gemini
+        logging.error(f"Gemini input parts: {[type(p).__name__ for p in parts]}")
+        response = model.generate_content(parts)
+        return (response.text or "").strip()
+    except InvalidArgument as exc:
+        logging.error(f"Gemini captioning rejected image: {exc}")
+        return ""
+    except Exception as exc:
+        logging.error(f"Gemini caption generation failed: {exc}")
+        return ""
 
 
 async def search_news_fallback(query: str, language: str) -> List[Dict[str, Any]]:
@@ -191,12 +239,20 @@ async def process_verification_request(
         language = detect_language(text)
 
     claim_text = (text or "").strip()
+    image_refs: Optional[Dict[str, str]] = None
     image_uri = None
     if image_bytes:
-        image_uri = await upload_image_to_bucket(image_bytes, image_mime, request_id)
+        image_refs = await upload_image_to_bucket(image_bytes, image_mime, request_id)
+        image_uri = image_refs.get("signed_url") if image_refs else None
         if not claim_text:
-            caption = await generate_image_caption(image_bytes, language, image_mime)
-            claim_text = caption.strip()
+            # First try OCR extraction
+            ocr_text = extract_text_from_image_bytes(image_bytes)
+            if ocr_text:
+                # Refine with Gemini
+                claim_text = await refine_text_with_gemini(ocr_text, language)
+            else:
+                caption = await generate_image_caption(image_uri, language)
+                claim_text = caption.strip() or "Image-only verification requested."
 
     if not claim_text:
         raise HTTPException(status_code=400, detail="Unable to determine claim text from request")
@@ -205,6 +261,14 @@ async def process_verification_request(
     evidence_entries = evidence_bundle.get("evidence", [])
     citations_raw = evidence_bundle.get("citations", [])
     fact_check_raw = evidence_bundle.get("fact_check_results", [])
+
+    citation_candidates: List[Dict[str, Any]] = []
+    for item in evidence_entries:
+        citation_candidates.append({
+            "title": item.get("title") or item.get("url") or "Source",
+            "url": item.get("url", ""),
+            "source": item.get("source", ""),
+        })
 
     normalized_fact_checks: List[Dict[str, Any]] = []
     for claim in fact_check_raw:
@@ -231,9 +295,25 @@ async def process_verification_request(
         image_mime=image_mime,
     )
 
-    if not gemini_result.get("citations"):
-        citation_urls = [item.get("url") for item in evidence_entries if item.get("url")]
-        gemini_result["citations"] = citation_urls
+    normalized_citations: List[Dict[str, Any]] = []
+    for entry in gemini_result.get("citations", []) or []:
+        if isinstance(entry, dict):
+            normalized_citations.append({
+                "title": entry.get("title") or entry.get("url") or "Source",
+                "url": entry.get("url", ""),
+                "source": entry.get("source", entry.get("publisher", "")),
+            })
+        elif isinstance(entry, str):
+            normalized_citations.append({
+                "title": entry,
+                "url": entry,
+                "source": "",
+            })
+
+    if not normalized_citations:
+        normalized_citations = citation_candidates
+
+    gemini_result["citations"] = normalized_citations
 
     if not gemini_result.get("fact_check_results"):
         gemini_result["fact_check_results"] = normalized_fact_checks
@@ -245,7 +325,7 @@ async def process_verification_request(
     return {
         "result": gemini_result,
         "claim_text": claim_text,
-        "image_uri": image_uri,
+        "image_uri": image_refs.get("gs_uri") if image_refs else None,
         "evidence_entries": evidence_entries,
         "fact_check_results": normalized_fact_checks,
         "citations_raw": citations_raw,
@@ -272,10 +352,10 @@ def detect_language(text: str) -> str:
 
 # Gemini AI integration
 # Allow overriding the model via environment variable
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-1.5-flash-002")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite")
 GEMINI_MODE = os.getenv("GEMINI_MODE", "vertex")  # vertex recommended (supports text+image)
 try:
-    logging.error(f"Using GEMINI_MODEL={GEMINI_MODEL}, GEMINI_MODE={GEMINI_MODE}")
+    logging.info(f"✅ Using Gemini model: {GEMINI_MODEL} (mode={GEMINI_MODE})")
 except Exception:
     pass
 
@@ -299,6 +379,7 @@ async def verify_with_gemini(
             for res in fact_check_results[:5]
         ]) or "No fact check reviews found."
 
+        current_year = datetime.utcnow().year
         prompt = f"""
 You are TruthLens, an evidence-driven fact checking assistant.
 Analyze the claim and the provided evidence. Respond ONLY with JSON matching this schema:
@@ -320,17 +401,28 @@ Fact check summaries:
 {fact_check_section}
 
 Rules:
+- If the claim references a year greater than {current_year}, set verdict to "unknown" with low confidence and explain it refers to a future event.
+- If no direct evidence is available, analyze plausibility using historical knowledge up to {current_year}.
 - Use only the evidence provided or well-established knowledge.
-- If evidence is insufficient, set verdict to "unknown" and confidence <= 0.4.
-- Include relevant URLs in the citations array.
+- Include reasoning in the explanation even when evidence is missing.
+- Include relevant URLs in the citations array when available.
 - Keep the explanation clear and concise.
 """
 
         model = GenerativeModel(GEMINI_MODEL)
-        parts = [Part.from_text(prompt)]
+        generation_parts: List[Any] = [Part.from_text(prompt)]
         if image_bytes:
-            parts.append(Part.from_image_bytes(image_bytes=image_bytes))
-        response = model.generate_content(parts)
+            generation_parts.append(Part.from_data(data=image_bytes, mime_type=image_mime or "image/jpeg"))
+        # Explicit logging before sending parts to Gemini
+        logging.error(f"Gemini input parts: {[type(p).__name__ for p in generation_parts]}")
+        try:
+            response = model.generate_content(generation_parts)
+        except InvalidArgument as exc:
+            logging.error(f"Gemini verification rejected input: {exc}")
+            raise HTTPException(status_code=400, detail="Gemini could not process the supplied media.")
+        except Exception as exc:
+            logging.error(f"Gemini verification failed: {exc}")
+            raise HTTPException(status_code=500, detail="AI verification failed")
 
         model_text = getattr(response, "text", "")
         parsed = _parse_json_from_text(model_text)
@@ -346,7 +438,6 @@ Rules:
             "fact_check_results": [],
             "timestamp": datetime.utcnow().isoformat()
         }
-            
     except Exception as e:
         logging.error(f"Gemini verification failed: {e}")
         raise HTTPException(status_code=500, detail="AI verification failed")
@@ -358,26 +449,28 @@ async def check_fact_check_api(text: str, language: str = "en") -> Dict[str, Any
         # Map language codes
         lang_map = {"en": "en", "hi": "hi", "ta": "ta"}
         query_lang = lang_map.get(language, "en")
-        
+
         url = "https://factchecktools.googleapis.com/v1alpha1/claims:search"
+        # URL encode the query for safety
+        safe_text = quote(text, safe="")
         params = {
-            "query": text,
+            "query": safe_text,
             "languageCode": query_lang,
             "pageSize": 5
         }
-        
+
         # Use API key from environment (preferred for local) or Secret Manager
         api_key = os.getenv("FACT_CHECK_API_KEY") or get_secret("fact-check-api-key")
         if not api_key:
             return {"citations": [], "fact_check_results": []}
-        
-        headers = {"X-Goog-Api-Key": api_key}
-        
+
+        headers = {"X-Goog-Api-Key": api_key, "Content-Type": "application/json; charset=utf-8"}
+
         response = requests.get(url, params=params, headers=headers)
         response.raise_for_status()
-        
+
         data = response.json()
-        
+
         citations = []
         for claim in data.get("claims", []):
             for review in claim.get("claimReview", []):
@@ -388,12 +481,12 @@ async def check_fact_check_api(text: str, language: str = "en") -> Dict[str, Any
                     "rating": review.get("textualRating", ""),
                     "date": review.get("reviewDate", "")
                 })
-        
+
         return {
             "citations": citations,
             "fact_check_results": data.get("claims", [])
         }
-        
+
     except Exception as e:
         logging.error(f"Fact Check API failed: {e}")
         return {"citations": [], "fact_check_results": []}
@@ -481,56 +574,27 @@ async def verify_claim_test(request: dict):
         logging.error(f"/verify-test failed: {e}")
         return {"request_id": request_id, "error": "Verification failed", "verdict": "error"}
 
-@app.post("/v1/verify-image-test")
-async def verify_image_test(
-    text: str = Form(""),
-    language: str = Form("en"),
-    mode: str = Form("fast"),
-    image: Optional[UploadFile] = File(None)
-):
-    """Unauthenticated image-friendly test endpoint. Accepts optional image attachments."""
-    request_id = str(uuid.uuid4())
-    try:
-        image_bytes = None
-        image_mime = "image/jpeg"
-        if image:
-            image_bytes = await image.read()
-            if getattr(image, "content_type", None):
-                image_mime = image.content_type or image_mime
-
-        bundle = await process_verification_request(
-            request_id=request_id,
-            text=text,
-            language=language,
-            mode=mode,
-            image_bytes=image_bytes,
-            image_mime=image_mime,
-        )
-        response_payload = bundle["result"].copy()
-        response_payload["request_id"] = request_id
-        return response_payload
-    except Exception as e:
-        logging.error(f"/verify-image-test failed: {e}")
-        return {"request_id": request_id, "error": "Verification failed", "verdict": "error"}
 
 @app.post("/v1/verify")
 async def verify_claim(
-    text: str = Form(...),
+    text: str = Form(""),
     mode: str = Form("fast"),
     language: str = Form("en"),
     image: Optional[UploadFile] = File(None),
     api_key: str = Depends(verify_api_key)
 ):
-    """Main verification endpoint"""
+    """Main verification endpoint. Accepts optional text and image."""
     start_time = datetime.utcnow()
     request_id = str(uuid.uuid4())
-    
+
     try:
         # Input preprocessing
-        detected_lang = detect_language(text)
+        # If text is None or missing, set to empty string
+        text_value = text if text is not None else ""
+        detected_lang = detect_language(text_value)
         if language == "auto":
             language = detected_lang
-        
+
         image_data = None
         image_mime = "image/jpeg"
         if image:
@@ -540,7 +604,7 @@ async def verify_claim(
 
         bundle = await process_verification_request(
             request_id=request_id,
-            text=text,
+            text=text_value,
             language=language,
             mode=mode,
             image_bytes=image_data,
@@ -555,27 +619,27 @@ async def verify_claim(
                 "mode": final_result.get("mode", mode),
             }
         )
-        
+
         # Calculate metrics
         latency = (datetime.utcnow() - start_time).total_seconds() * 1000
-        cost = calculate_cost(mode, len(text), image_data is not None)
-        
+        cost = calculate_cost(mode, len(text_value), image_data is not None)
+
         # Store evidence and log request
         await asyncio.gather(
             store_evidence(request_id, image_data, final_result, existing_image_uri=bundle.get("image_uri"), image_mime=image_mime),
-            log_request(request_id, text, mode, language, 
-                       final_result["verdict"], final_result["confidence"], 
+            log_request(request_id, text_value, mode, language,
+                       final_result["verdict"], final_result["confidence"],
                        latency, cost)
         )
-        
+
         # Add metrics to response
         final_result["metrics"] = {
             "latency_ms": latency,
             "cost_usd": cost
         }
-        
+
         return final_result
-        
+
     except Exception as e:
         logging.error(f"Verification failed for request {request_id}: {e}")
         raise HTTPException(status_code=500, detail="Verification failed")

@@ -1,0 +1,34 @@
+# /Users/apple/OrangeLens/app/cloudbuild.yaml
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -t
+      - gcr.io/orange-lens-472108/truthlens-app:latest
+      - --build-arg
+      - REACT_APP_API_URL=${_REACT_APP_API_URL}
+      - --build-arg
+      - REACT_APP_API_KEY=${_REACT_APP_API_KEY}
+      - .
+
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - push
+      - gcr.io/orange-lens-472108/truthlens-app:latest
+
+  - name: gcr.io/google.com/cloudsdktool/cloud-sdk
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - truthlens-app
+      - --image
+      - gcr.io/orange-lens-472108/truthlens-app:latest
+      - --region
+      - us-central1
+      - --platform
+      - managed
+      - --allow-unauthenticated
+
+images:
+  - gcr.io/orange-lens-472108/truthlens-app:latest

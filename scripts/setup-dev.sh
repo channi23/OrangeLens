@@ -27,6 +27,24 @@ if ! command -v gcloud &> /dev/null; then
     exit 1
 fi
 
+# Check if Tesseract OCR is installed (used for image text extraction)
+if ! command -v tesseract &> /dev/null; then
+    echo "🔍 Installing Tesseract OCR..."
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        if command -v brew &> /dev/null; then
+            brew install tesseract
+        else
+            echo "⚠️ Homebrew not found. Please install Tesseract manually: https://tesseract-ocr.github.io/tessdoc/Installation.html"
+            exit 1
+        fi
+    elif [[ -f "/etc/debian_version" ]]; then
+        sudo apt-get update && sudo apt-get install -y tesseract-ocr
+    else
+        echo "⚠️ Unsupported OS for automatic Tesseract install. Install it manually before continuing."
+        exit 1
+    fi
+fi
+
 echo "✅ Prerequisites check passed"
 
 # Setup API environment

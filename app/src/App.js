@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import './App.css';
 
-const API_BASE_URL = 'https://truthlens-api-276376440888.us-central1.run.app';
+const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:8080';
 const API_KEY = process.env.REACT_APP_API_KEY;
 
 function App() {
@@ -32,7 +32,8 @@ function App() {
     // If a shared image was provided via the service worker, fetch and attach it
     const sharedImagePath = urlParams.get('sharedImage');
     if (sharedImagePath) {
-      fetch(sharedImagePath)
+      const decodedPath = decodeURIComponent(sharedImagePath);
+      fetch(decodedPath)
         .then(res => res.blob())
         .then(blob => {
           const file = new File([blob], 'shared-image', { type: blob.type || 'image/jpeg' });
@@ -43,7 +44,7 @@ function App() {
   }, []);
 
   const handleVerification = async () => {
-    if (!claim.trim()) return;
+    if (!claim.trim() && !image) return;
 
     if (mode === 'deep' && !API_KEY) {
       setStep('');
@@ -63,46 +64,36 @@ function App() {
     try {
       setStep('Calling Gemini AI...');
 
-      let response;
-      const shouldUseSecureEndpoint = Boolean(API_KEY);
-
-      if (shouldUseSecureEndpoint) {
-        const form = new FormData();
+      const form = new FormData();
+      form.append('mode', mode);
+      form.append('language', language);
+      if (claim.trim()) {
         form.append('text', claim);
-        form.append('mode', mode);
-        form.append('language', language);
-        if (image) {
-          form.append('image', image);
-        }
-
-        response = await fetch(`${API_BASE_URL}/v1/verify`, {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${API_KEY}`
-          },
-          body: form
-        });
-      } else if (image) {
-        // Use multipart to hit unauthenticated image test endpoint when API key is not available
-        const form = new FormData();
-        form.append('text', claim);
-        form.append('mode', mode);
-        form.append('language', language);
-        form.append('image', image);
-
-        response = await fetch(`${API_BASE_URL}/v1/verify-image-test`, {
-          method: 'POST',
-          body: form
-        });
-      } else {
-        // Text-only path uses the test endpoint (no auth required)
-        const requestBody = { text: claim, mode, language };
-        response = await fetch(`${API_BASE_URL}/v1/verify-test`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(requestBody)
-        });
       }
+      if (image) {
+        form.append('image', image);
+      }
+
+      console.log("Calling /v1/verify with text and/or image");
+      // Log form data except image
+      for (const [key, value] of form.entries()) {
+        if (key === 'image') {
+          console.log(`${key}: [image file]`);
+        } else {
+          console.log(`${key}: ${value}`);
+        }
+      }
+
+      const headers = {};
+      if (API_KEY) {
+        headers['Authorization'] = `Bearer ${API_KEY}`;
+      }
+
+      const response = await fetch(`${API_BASE_URL}/v1/verify`, {
+        method: 'POST',
+        headers,
+        body: form
+      });
 
       if (!response.ok) {
         throw new Error(`API responded with ${response.status}`);
@@ -146,6 +137,8 @@ function App() {
       case 'false': return '#f44336';
       case 'misleading': return '#ff9800';
       case 'unverified': return '#9e9e9e';
+      case 'unknown': return '#9e9e9e';
+      case 'error': return '#f44336';
       default: return '#2196f3';
     }
   };
@@ -156,6 +149,8 @@ function App() {
       case 'false': return '✗';
       case 'misleading': return '⚠';
       case 'unverified': return '?';
+      case 'unknown': return '?';
+      case 'error': return '✗';
       default: return 'ℹ';
     }
   };
@@ -225,7 +220,7 @@ function App() {
           <button
             className="verify-button"
             onClick={handleVerification}
-            disabled={isVerifying || !claim.trim()}
+            disabled={isVerifying || (!claim.trim() && !image)}
           >
             {isVerifying ? 'Verifying...' : 'Verify Claim'}
           </button>
@@ -266,7 +261,7 @@ function App() {
                   {getVerdictIcon(result.verdict)}
                 </span>
                 <span className="verdict-text">
-                  {result.verdict?.toUpperCase() || 'ERROR'}
+                  {result.verdict ? result.verdict.toUpperCase() : (result.error ? 'ERROR' : 'UNKNOWN')}
                 </span>
                 <span className="confidence">
                   {result.confidence ? `${Math.round(result.confidence * 100)}%` : ''}
@@ -286,7 +281,7 @@ function App() {
                           <a href={citation.url} target="_blank" rel="noopener noreferrer">
                             {citation.title || citation.url}
                           </a>
-                          <span className="source">{citation.publisher}</span>
+                          <span className="source">{citation.source || citation.publisher || ''}</span>
                         </li>
                       ))}
                     </ul>
