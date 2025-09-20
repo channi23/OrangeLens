@@ -1,9 +1,9 @@
 # TruthLens - AI-Powered Fact Verification
 
-A Progressive Web App that provides one-tap fact verification from any mobile app via the system Share sheet, with transparent AI explanations and verified citations.
+A Progressive Web App that provides one-tap fact verification from any mobile app via the system Share sheet , with transparent AI explanations and verified citations.
 
 ## 🎯 USP
-One-tap fact verification from any mobile app via the system Share sheet, with transparent AI explanations and verified citations. Powered by Google Cloud for scalability, cost-efficiency, and transparency.
+One-tap fact verification from any mobile app via the system Share sheet enabling fast, reliable checks with minimal effort. Backed by Retrieval-Augmented Generation (RAG) for contextual accuracy and transparent AI explanations with verified citations. Built on Google Cloud for scalability, cost-efficiency, and trust. Designed for ease of use with fewer steps and seamless integration.
 
 ## 🏗️ Architecture
 
@@ -78,7 +78,7 @@ cd OrangeLens
 
 ## 🏃‍♂️ Getting Started
 
-<span style="font-size:2em; font-weight:bold;">### Linux/macOS</span>
+<span style="font-size:2em ; font-weight:bold;">### Linux/macOS</span>
 
 ### 1. Setup Development Environment
 ```bash
@@ -140,11 +140,6 @@ echo "REACT_APP_API_URL=http://localhost:8080" > .env
 npm install
 npm start
 ```
-3) Mobile Share Target
-- Install the PWA to your device (Add to Home Screen).
-- Share text or an image to TruthLens; the app opens with the text prefilled and image attached.
-- Image flows use `POST /v1/verify-image-test` locally (no API key needed).
-
 ### 3. Test the API (optional)
 ```bash
 ./scripts/test-api.sh
@@ -252,14 +247,8 @@ TruthLens/
 4. Add tests
 5. Submit a pull request
 
-## 📄 License
-MIT License - see LICENSE file for details
+## 🆘 Suggestions? Email us here : 
 
-## 🆘 Support
-- **Email**: support@truthlens.app
-- **Documentation**: https://docs.truthlens.app
-- **Issues**: https://github.com/channi23/OrangeLens/issues
-- **Status**: https://status.truthlens.app
 
 ## 🗺️ Roadmap
 - [ ] Mobile app (iOS/Android)
@@ -271,14 +260,8 @@ MIT License - see LICENSE file for details
 - [ ] API rate limiting
 - [ ] Multi-tenant support
 
----
 
-**TruthLens** - Making fact verification accessible, transparent, and reliable. 🔍✨
-
----
-
-
-<span style="font-weight:bold;">------------------------------------------------------------------------------------------------- </span>
+<span style="font-weight:bold;">--------------------------------------------------------------------------------------------------------------------------------------------------</span>
 
 <span style="font-size:2em; font-weight:bold;">🪟 Windows Setup Guide (Single Terminal)</span>
 
