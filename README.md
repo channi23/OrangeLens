@@ -7,7 +7,11 @@ An App that provides one-tap fact verification from any mobile app via the syste
 
 Click below to download and install the latest APK:
 
-[⬇️ Download Pramana APK](https://github.com/channi23/OrangeLens/raw/fbd0e864691665c3a1bafcdefb4619a0b8cb0608/Pramana-v2-debug.apk)
+## 📱 Download Pramana
+
+Click below to download and install the latest APK:
+
+[⬇️ Download Pramana APK](https://github.com/channi23/OrangeLens/raw/5afe77a3c4b69c1507b54a9da36efdf99817d337/Pramana-v3-debug.apk)
 
 ## 🎯 USP
 One-tap fact verification from any mobile app via the system Share sheet enabling fast, reliable checks with minimal effort. Backed by Retrieval-Augmented Generation (RAG) for contextual accuracy and transparent AI explanations with verified citations. Built on Google Cloud for scalability, cost-efficiency, and trust. Designed for ease of use with fewer steps and seamless integration.
