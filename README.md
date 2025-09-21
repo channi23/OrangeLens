@@ -255,7 +255,7 @@ TruthLens/
 4. Add tests
 5. Submit a pull request
 
-## 🆘 Suggestions? Email us here : 
+## 🆘 Suggestions? Email us here : orangxai@gmail.com
 
 
 ## 🗺️ Roadmap
