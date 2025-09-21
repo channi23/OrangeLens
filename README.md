@@ -10,6 +10,8 @@ Click below to download and install the latest APK:
 
 [⬇️ Download Pramana APK](https://github.com/channi23/OrangeLens/raw/5afe77a3c4b69c1507b54a9da36efdf99817d337/Pramana-v3-debug.apk)
 
+note: while downloading don't scan the app , it may stop the installation
+
 ## 🎯 USP
 One-tap fact verification from any mobile app via the system Share sheet enabling fast, reliable checks with minimal effort. Backed by Retrieval-Augmented Generation (RAG) for contextual accuracy and transparent AI explanations with verified citations. Built on Google Cloud for scalability, cost-efficiency, and trust. Designed for ease of use with fewer steps and seamless integration.
 
