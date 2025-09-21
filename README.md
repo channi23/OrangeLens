@@ -3,9 +3,6 @@
 
 An App that provides one-tap fact verification from any mobile app via the system Share sheet , with transparent AI explanations and verified citations.
 
-## 📱 Download Pramana
-
-Click below to download and install the latest APK:
 
 ## 📱 Download Pramana
 
