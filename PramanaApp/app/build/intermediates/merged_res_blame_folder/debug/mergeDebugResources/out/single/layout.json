@@ -1,0 +1,22 @@
+[
+    {
+        "merged": "/Users/apple/.gradle/daemon/8.13/com.example.truthlens.app-mergeDebugResources-31:/layout/activity_main.xml",
+        "source": "/Users/apple/.gradle/daemon/8.13/com.example.truthlens.app-main-34:/layout/activity_main.xml"
+    },
+    {
+        "merged": "/Users/apple/.gradle/daemon/8.13/com.example.truthlens.app-mergeDebugResources-31:/layout/activity_verify.xml",
+        "source": "/Users/apple/.gradle/daemon/8.13/com.example.truthlens.app-main-34:/layout/activity_verify.xml"
+    },
+    {
+        "merged": "com.example.truthlens.app-mergeDebugResources-31:/layout/dialog_verify_result.xml",
+        "source": "com.example.truthlens.app-main-34:/layout/dialog_verify_result.xml"
+    },
+    {
+        "merged": "/Users/apple/.gradle/daemon/8.13/com.example.truthlens.app-mergeDebugResources-31:/layout/dialog_verify_result.xml",
+        "source": "/Users/apple/.gradle/daemon/8.13/com.example.truthlens.app-main-34:/layout/dialog_verify_result.xml"
+    },
+    {
+        "merged": "/Users/apple/.gradle/daemon/8.13/com.example.truthlens.app-mergeDebugResources-31:/layout/activity_share_receiver.xml",
+        "source": "/Users/apple/.gradle/daemon/8.13/com.example.truthlens.app-main-34:/layout/activity_share_receiver.xml"
+    }
+]

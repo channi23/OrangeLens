@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:gravity="center"
+    android:padding="16dp"
+    android:background="@android:color/white">
+
+    <!-- Title -->
+    <TextView
+        android:id="@+id/titleText"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="🔍 TruthLens"
+        android:textSize="22sp"
+        android:textStyle="bold"
+        android:padding="8dp"
+        android:textColor="@android:color/black" />
+
+    <!-- Shared image preview -->
+    <ImageView
+        android:id="@+id/resultImage"
+        android:layout_width="220dp"
+        android:layout_height="220dp"
+        android:scaleType="centerCrop"
+        android:layout_marginBottom="12dp"
+        android:visibility="gone"
+        android:contentDescription="Shared image preview" />
+
+    <!-- Loader (centered animation) -->
+    <com.airbnb.lottie.LottieAnimationView
+        android:id="@+id/loaderView"
+        android:layout_width="150dp"
+        android:layout_height="150dp"
+        android:layout_margin="12dp"
+        android:visibility="gone"
+        app:lottie_autoPlay="true"
+        app:lottie_loop="true"
+        app:lottie_rawRes="@raw/loader" />
+
+    <!-- Scrollable results -->
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:padding="8dp">
+
+        <TextView
+            android:id="@+id/resultText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Waiting for shared content..."
+            android:textSize="16sp"
+            android:textColor="@android:color/black"
+            android:lineSpacingExtra="4dp"
+            android:autoLink="web"
+            android:linksClickable="true" />
+    </ScrollView>
+
+    <!-- Status bar -->
+    <TextView
+        android:id="@+id/statusText"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Idle"
+        android:textSize="14sp"
+        android:textStyle="italic"
+        android:textColor="@android:color/darker_gray"
+        android:padding="6dp" />
+
+</LinearLayout>

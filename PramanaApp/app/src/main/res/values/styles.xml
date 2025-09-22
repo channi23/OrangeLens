@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <!-- App theme (already referenced in your manifest) -->
+    <style name="Theme.Pramana" parent="Theme.MaterialComponents.DayNight.NoActionBar" />
+
+    <!-- Transparent activity theme for the Share sheet overlay -->
+    <style name="Theme.Transparent" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowFullscreen">true</item>
+        <!-- Optional: keep the host app fully visible (no dim) -->
+        <item name="android:backgroundDimEnabled">false</item>
+    </style>
+
+    <!-- Transparent BottomSheet Dialog theme -->
+    <style name="TransparentBottomSheetDialog" parent="Theme.Design.Light.BottomSheetDialog">
+        <item name="bottomSheetStyle">@style/TransparentBottomSheet</item>
+    </style>
+
+    <!-- Transparent BottomSheet widget -->
+    <style name="TransparentBottomSheet" parent="Widget.Design.BottomSheet.Modal">
+        <item name="android:background">@android:color/transparent</item>
+    </style>
+
+</resources>

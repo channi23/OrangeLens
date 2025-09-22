@@ -1,0 +1,4 @@
+#Sun Sep 21 11:13:25 IST 2025
+base.0=/Users/apple/Downloads/PramanaApp/app/build/intermediates/dex/debugAndroidTest/mergeProjectDexDebugAndroidTest/0/classes.dex
+path.0=0/classes.dex
+renamed.0=classes.dex

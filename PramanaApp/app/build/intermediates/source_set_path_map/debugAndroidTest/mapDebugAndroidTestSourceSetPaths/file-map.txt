@@ -1,0 +1,4 @@
+com.example.truthlens.test.app-androidTest-0 /Users/apple/Downloads/PramanaApp/app/build/generated/res/resValues/androidTest/debug
+com.example.truthlens.test.app-mergeDebugAndroidTestResources-1 /Users/apple/Downloads/PramanaApp/app/build/intermediates/incremental/debugAndroidTest/mergeDebugAndroidTestResources/merged.dir
+com.example.truthlens.test.app-mergeDebugAndroidTestResources-2 /Users/apple/Downloads/PramanaApp/app/build/intermediates/incremental/debugAndroidTest/mergeDebugAndroidTestResources/stripped.dir
+com.example.truthlens.test.app-debugAndroidTest-3 /Users/apple/Downloads/PramanaApp/app/build/intermediates/merged_res/debugAndroidTest/mergeDebugAndroidTestResources

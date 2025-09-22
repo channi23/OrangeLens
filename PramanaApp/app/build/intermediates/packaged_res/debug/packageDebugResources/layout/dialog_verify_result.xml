@@ -1,0 +1,182 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:padding="20dp"
+    android:gravity="center_horizontal"
+    android:background="@android:color/transparent"
+    android:animateLayoutChanges="true">
+
+    <!-- Shared Image Thumbnail -->
+    <ImageView
+        android:id="@+id/resultImage"
+        android:layout_width="160dp"
+        android:layout_height="160dp"
+        android:scaleType="centerCrop"
+        android:layout_gravity="center"
+        android:layout_marginBottom="12dp"
+        android:visibility="gone"
+        android:background="@drawable/rounded_bg_light"
+        android:clipToOutline="true"
+        android:elevation="8dp" />
+
+    <!-- Floating verdict pill -->
+    <TextView
+        android:id="@+id/verdictPill"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:paddingStart="24dp"
+        android:paddingEnd="24dp"
+        android:paddingTop="8dp"
+        android:paddingBottom="8dp"
+        android:text="VERDICT"
+        android:textSize="14sp"
+        android:textStyle="bold"
+        android:textColor="@android:color/white"
+        android:background="@drawable/pill_unknown"
+        android:elevation="8dp"
+        android:visibility="gone"
+        android:layout_marginBottom="16dp" />
+
+    <!-- FrameLayout ensures loader OR card is visible at a time -->
+    <FrameLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="16dp"
+        android:clipToOutline="true"
+        android:animateLayoutChanges="true">
+
+        <!-- Loader overlay (full cover, visible by default) -->
+        <LinearLayout
+            android:id="@+id/loaderContainer"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:minHeight="300dp"
+            android:gravity="center"
+            android:orientation="vertical"
+            android:background="@android:color/white"
+            android:elevation="10dp"
+            android:visibility="visible">
+
+            <com.airbnb.lottie.LottieAnimationView
+                android:id="@+id/loaderView"
+                android:layout_width="200dp"
+                android:layout_height="200dp"
+                app:lottie_autoPlay="false"
+                app:lottie_loop="true"
+                app:lottie_rawRes="@raw/loader" />
+
+            <TextView
+                android:id="@+id/loaderStatus"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Analyzing claim..."
+                android:textSize="16sp"
+                android:textStyle="italic"
+                android:textColor="@android:color/darker_gray"
+                android:layout_marginTop="16dp" />
+        </LinearLayout>
+
+        <!-- Results card (hidden until response comes) -->
+        <com.google.android.material.card.MaterialCardView
+            android:id="@+id/resultCard"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            app:cardCornerRadius="20dp"
+            app:cardElevation="4dp"
+            android:backgroundTint="@android:color/white"
+            android:visibility="gone">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="20dp">
+
+                <!-- Scrollable text -->
+                <ScrollView
+                    android:layout_width="match_parent"
+                    android:layout_height="0dp"
+                    android:layout_weight="1"
+                    android:maxHeight="400dp"
+                    android:overScrollMode="ifContentScrolls">
+
+                    <TextView
+                        android:id="@+id/resultText"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="✨ Verification results will appear here..."
+                        android:textSize="16sp"
+                        android:textColor="@android:color/black"
+                        android:lineSpacingExtra="6dp"
+                        android:autoLink="web"
+                        android:linksClickable="true" />
+                </ScrollView>
+
+                <!-- Buttons fixed at bottom -->
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:layout_marginTop="16dp">
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/openAppButton"
+                        style="@style/Widget.MaterialComponents.Button.UnelevatedButton"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="Continue in App"
+                        android:textAllCaps="false"
+                        android:textSize="16sp"
+                        android:backgroundTint="@color/purple_500"
+                        android:textColor="@android:color/white"
+                        app:cornerRadius="24dp"
+                        android:elevation="4dp" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/closeButton"
+                        style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="Close"
+                        android:textAllCaps="false"
+                        android:textSize="16sp"
+                        android:layout_marginTop="10dp"
+                        app:cornerRadius="24dp"
+                        android:textColor="@android:color/darker_gray"
+                        app:strokeColor="@android:color/darker_gray"
+                        app:strokeWidth="1dp" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/retryButton"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="Retry"
+                        android:textAllCaps="false"
+                        android:textSize="16sp"
+                        android:layout_marginTop="10dp"
+                        app:cornerRadius="24dp"
+                        android:backgroundTint="@android:color/holo_orange_dark"
+                        android:textColor="@android:color/white"
+                        android:visibility="gone" />
+                </LinearLayout>
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+    </FrameLayout>
+
+    <!-- Status text -->
+    <TextView
+        android:id="@+id/statusText"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Idle"
+        android:textSize="14sp"
+        android:textStyle="italic"
+        android:textColor="@android:color/darker_gray"
+        android:layout_marginTop="4dp"
+        android:layout_gravity="center" />
+</LinearLayout>
