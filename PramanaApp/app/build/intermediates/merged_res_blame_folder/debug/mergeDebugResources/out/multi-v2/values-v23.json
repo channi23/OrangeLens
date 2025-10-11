@@ -1,7 +1,7 @@
 {
     "logs": [
         {
-            "outputFile": "com.example.truthlens.app-mergeDebugResources-30:/values-v23/values-v23.xml",
+            "outputFile": "com.example.truthlens.app-mergeDebugResources-58:/values-v23/values-v23.xml",
             "map": [
                 {
                     "source": "/Users/apple/.gradle/caches/8.13/transforms/f7bf1b887132314a71dca64567c3d2ab/transformed/cardview-1.0.0/res/values-v23/values-v23.xml",

@@ -17,18 +17,14 @@ drawable pill_neutral
 drawable pill_true
 drawable pill_unknown
 drawable rounded_bg_light
-id appTagline
-id appTitle
 id closeButton
 id confidenceBar
-id fabVerify
 id imagePreview
 id inputText
 id loader
 id loaderContainer
 id loaderStatus
 id loaderView
-id logoImage
 id openAppButton
 id resultCard
 id resultImage
@@ -43,7 +39,6 @@ id verdictText
 id verifyButton
 id verifyResult
 id verifyTitle
-layout activity_main
 layout activity_share_receiver
 layout activity_verify
 layout dialog_verify_result
@@ -51,6 +46,7 @@ mipmap ic_launcher
 mipmap ic_launcher_foreground
 mipmap ic_launcher_round
 raw loader
+raw siri_glow_border
 string app_name
 style Theme.Pramana
 style Theme.Transparent

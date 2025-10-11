@@ -32,6 +32,11 @@
             android:name=".VerifyActivity"
             android:exported="false" />
 
+        <!-- 🕘 HistoryActivity (placeholder) -->
+        <activity
+            android:name=".HistoryActivity"
+            android:exported="false" />
+
         <!-- 🚀 Main launcher screen -->
         <activity
             android:name=".MainActivity"

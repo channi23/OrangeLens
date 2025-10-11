@@ -26,6 +26,7 @@
         android:label="Pramana"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
+        android:testOnly="true"
         android:theme="@style/Theme.MaterialComponents.DayNight.NoActionBar" >
 
         <!-- 📤 Handles shared text/images from other apps -->
@@ -49,6 +50,11 @@
             android:name="com.example.truthlens.VerifyActivity"
             android:exported="false" />
 
+        <!-- 🕘 HistoryActivity (placeholder) -->
+        <activity
+            android:name="com.example.truthlens.HistoryActivity"
+            android:exported="false" />
+
         <!-- 🚀 Main launcher screen -->
         <activity
             android:name="com.example.truthlens.MainActivity"
@@ -59,6 +65,9 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <activity
+            android:name="androidx.compose.ui.tooling.PreviewActivity"
+            android:exported="true" />
 
         <provider
             android:name="androidx.startup.InitializationProvider"

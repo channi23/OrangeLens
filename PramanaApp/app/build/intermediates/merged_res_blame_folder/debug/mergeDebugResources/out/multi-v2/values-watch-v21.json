@@ -1,7 +1,7 @@
 {
     "logs": [
         {
-            "outputFile": "com.example.truthlens.app-mergeDebugResources-30:/values-watch-v21/values-watch-v21.xml",
+            "outputFile": "com.example.truthlens.app-mergeDebugResources-58:/values-watch-v21/values-watch-v21.xml",
             "map": [
                 {
                     "source": "/Users/apple/.gradle/caches/8.13/transforms/6954c5679726d72a953f6b23cb7e3cc9/transformed/appcompat-1.6.1/res/values-watch-v21/values-watch-v21.xml",
