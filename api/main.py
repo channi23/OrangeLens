@@ -4,7 +4,7 @@ import logging
 import asyncio
 from datetime import datetime, timedelta
 from typing import Dict, Any, Optional, List
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Depends
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from google.cloud import aiplatform
@@ -26,6 +26,7 @@ except ImportError:
     logging.warning("pillow-heif not available, HEIF/HEIC images will not be supported.")
 import pytesseract
 from urllib.parse import quote
+from concurrent.futures import ThreadPoolExecutor
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -46,7 +47,6 @@ app.add_middleware(
 # Security
 security = HTTPBearer()
 
-# Configuration
 PROJECT_ID = os.getenv("GOOGLE_CLOUD_PROJECT", "orange-lens-472108")
 LOCATION = os.getenv("GOOGLE_CLOUD_LOCATION", "us-central1")
 BUCKET_NAME = os.getenv("STORAGE_BUCKET", "truthlens-evidence-orange-lens-472108")
@@ -54,9 +54,9 @@ DATASET_ID = os.getenv("BIGQUERY_DATASET", "truthlens_logs")
 TABLE_ID = os.getenv("BIGQUERY_TABLE", "verification_requests")
 SERPER_API_KEY = os.getenv("SERPER_API_KEY", "")
 SERPER_API_ENDPOINT = os.getenv("SERPER_API_ENDPOINT", "https://google.serper.dev/news")
+WEBRISK_API_KEY = os.getenv("WEBRISK_API_KEY", "")
+WEBRISK_API_URL = "https://webrisk.googleapis.com/v1/uris:search"
 
-# Initialize clients
-# Set API version to beta for Gemini 1.5 models (Vertex path kept for backwards compatibility)
 os.environ["GOOGLE_CLOUD_AI_PLATFORM_API_VERSION"] = "v1beta"
 vertexai.init(project=PROJECT_ID, location=LOCATION)
 try:
@@ -66,6 +66,118 @@ except Exception:
 storage_client = storage.Client()
 bigquery_client = bigquery.Client()
 secret_client = secretmanager.SecretManagerServiceClient()
+executor = ThreadPoolExecutor(max_workers=4)
+# --- Link Verification Helpers ---
+def get_url_hash(url: str) -> str:
+    return hashlib.sha256(url.encode()).hexdigest()
+
+def get_link_cache_table():
+    table_name = f"{PROJECT_ID}.{DATASET_ID}.link_verification_cache"
+    return bigquery_client.dataset(DATASET_ID).table("link_verification_cache"), table_name
+
+def cache_link_verification(url: str, data: dict):
+    """Cache link verification result in BigQuery"""
+    try:
+        _, table_name = get_link_cache_table()
+        row = {
+            "url_hash": get_url_hash(url),
+            "url": url,
+            "data": json.dumps(data),
+            "timestamp": datetime.utcnow().isoformat()
+        }
+        errors = bigquery_client.insert_rows_json(table_name, [row])
+        if errors:
+            logging.error(f"BigQuery link cache insert errors: {errors}")
+    except Exception as e:
+        logging.error(f"BigQuery link cache failed: {e}")
+
+def get_cached_link_verification(url: str) -> Optional[dict]:
+    """Retrieve cached link verification result from BigQuery"""
+    try:
+        _, table_name = get_link_cache_table()
+        query = f"""
+            SELECT data FROM `{table_name}`
+            WHERE url_hash = @url_hash
+            ORDER BY timestamp DESC
+            LIMIT 1
+        """
+        job = bigquery_client.query(query, job_config=bigquery.QueryJobConfig(
+            query_parameters=[bigquery.ScalarQueryParameter("url_hash", "STRING", get_url_hash(url))]
+        ))
+        rows = list(job)
+        if rows:
+            return json.loads(rows[0]["data"])
+    except Exception as e:
+        logging.error(f"BigQuery link cache lookup failed: {e}")
+    return None
+
+async def fetch_url_metadata(url: str) -> dict:
+    """Fetch URL metadata and headers for scanning."""
+    try:
+        resp = requests.get(url, timeout=8, headers={"User-Agent": "Mozilla/5.0"})
+        headers = dict(resp.headers)
+        text = resp.text
+        title_match = re.search(r"<title>(.*?)</title>", text, re.IGNORECASE | re.DOTALL)
+        title = title_match.group(1).strip() if title_match else ""
+        meta_desc_match = re.search(r'<meta\s+name=["\']description["\']\s+content=["\'](.*?)["\']', text, re.IGNORECASE)
+        meta_desc = meta_desc_match.group(1).strip() if meta_desc_match else ""
+        return {
+            "status_code": resp.status_code,
+            "headers": headers,
+            "title": title,
+            "meta_description": meta_desc,
+            "content_length": len(text)
+        }
+    except Exception as e:
+        logging.error(f"Metadata fetch failed for {url}: {e}")
+        return {}
+
+async def check_webrisk(url: str) -> dict:
+    """Check URL against Google Web Risk API."""
+    if not WEBRISK_API_KEY:
+        return {"webrisk_status": "unknown", "reason": "API key not set"}
+    try:
+        params = {"uri": url, "key": WEBRISK_API_KEY}
+        resp = requests.get(WEBRISK_API_URL, params=params, timeout=8)
+        resp.raise_for_status()
+        data = resp.json()
+        if "threat" in data:
+            return {"webrisk_status": "malicious", "threat": data["threat"]}
+        else:
+            return {"webrisk_status": "safe"}
+    except Exception as e:
+        logging.error(f"WebRisk failed for {url}: {e}")
+        return {"webrisk_status": "unknown", "error": str(e)}
+
+def manipulation_prompt(url: str, metadata: dict) -> str:
+    return f"""You are a web content analyst. Given the following URL and metadata, detect if there are any signs of manipulation, misinformation, clickbait, or other deceptive techniques. Respond in JSON:
+{{
+  "manipulation_technique": "none | clickbait | misleading | scam | phishing | deepfake | unknown | other",
+  "explanation": string
+}}
+
+URL: {url}
+Title: {metadata.get('title','')}
+Meta description: {metadata.get('meta_description','')}
+Headers: {json.dumps(metadata.get('headers',{}))}
+"""
+
+async def detect_manipulation_gemini(url: str, metadata: dict) -> dict:
+    """Call Gemini to detect manipulation technique for a URL."""
+    model = GenerativeModel(GEMINI_MODEL)
+    prompt = manipulation_prompt(url, metadata)
+    loop = asyncio.get_event_loop()
+    # Run blocking Gemini call in executor
+    def call_model():
+        try:
+            response = model.generate_content([Part.from_text(prompt)])
+            parsed = _parse_json_from_text(response.text)
+            if parsed:
+                return parsed
+        except Exception as e:
+            logging.error(f"Gemini manipulation detection failed: {e}")
+        return {"manipulation_technique": "unknown", "explanation": ""}
+    return await loop.run_in_executor(executor, call_model)
 
 # Load secrets
 def get_secret(secret_name: str) -> str:
@@ -251,8 +363,15 @@ async def process_verification_request(
                 # Refine with Gemini
                 claim_text = await refine_text_with_gemini(ocr_text, language)
             else:
-                caption = await generate_image_caption(image_uri, language)
-                claim_text = caption.strip() or "Image-only verification requested."
+                # Use raw bytes for caption generation (not the URL)
+                caption = await generate_image_caption(image_bytes, language, image_mime)
+                caption = caption.strip()
+
+                if caption:
+                    # Refine the caption into a clearer factual claim
+                    claim_text = await refine_text_with_gemini(caption, language)
+                else:
+                    claim_text = "Image-only verification requested."
 
     if not claim_text:
         raise HTTPException(status_code=400, detail="Unable to determine claim text from request")
@@ -294,6 +413,45 @@ async def process_verification_request(
         image_bytes=image_bytes,
         image_mime=image_mime,
     )
+
+    # Manipulation detection using Gemini for claims
+    manipulation_technique = None
+    manipulation_explanation = None
+    try:
+        # Use Gemini to detect manipulation in the claim text itself
+        manipulation_prompt_claim = f"""You are a manipulation detection assistant. Given the following claim, detect if it shows signs of manipulation, misinformation, or deceptive techniques. Respond in JSON:
+{{
+  "manipulation_technique": "none | clickbait | misleading | scam | phishing | deepfake | unknown | other",
+  "explanation": string
+}}
+
+Claim: {claim_text}
+"""
+        model = GenerativeModel(GEMINI_MODEL)
+        loop = asyncio.get_event_loop()
+        def call_model():
+            try:
+                response = model.generate_content([Part.from_text(manipulation_prompt_claim)])
+                parsed = _parse_json_from_text(response.text)
+                if parsed:
+                    return parsed
+            except Exception as e:
+                logging.error(f"Gemini manipulation detection (claim) failed: {e}")
+            return None
+        manipulation = await loop.run_in_executor(executor, call_model)
+        if manipulation:
+            manipulation_technique = manipulation.get("manipulation_technique")
+            manipulation_explanation = manipulation.get("explanation")
+            # Merge into gemini_result
+            gemini_result["manipulation_technique"] = manipulation_technique
+            gemini_result["manipulation_explanation"] = manipulation_explanation
+        else:
+            gemini_result["manipulation_technique"] = None
+            gemini_result["manipulation_explanation"] = None
+    except Exception as e:
+        logging.error(f"Manipulation detection (claim) failed: {e}")
+        gemini_result["manipulation_technique"] = None
+        gemini_result["manipulation_explanation"] = None
 
     normalized_citations: List[Dict[str, Any]] = []
     for entry in gemini_result.get("citations", []) or []:
@@ -381,10 +539,14 @@ async def verify_with_gemini(
 
         current_year = datetime.utcnow().year
         prompt = f"""
-You are TruthLens, an evidence-driven fact checking assistant.
-Analyze the claim and the provided evidence. Respond ONLY with JSON matching this schema:
+You are TruthLens, an evidence-driven fact-checking assistant designed to analyze both text and visual information.
+
+Your task:
+- Examine the claim, the evidence, and (if provided) the image.
+- If an image is included, prioritize its visual context and verify whether the image supports, contradicts, or misleads regarding the claim.
+- Respond ONLY in JSON matching this schema:
 {{
-  "verdict": "true | false | misleading | unknown",
+  "verdict": "true | false | misleading | unverifiable | unknown",
   "confidence": number,
   "explanation": string,
   "key_facts": [string],
@@ -392,6 +554,7 @@ Analyze the claim and the provided evidence. Respond ONLY with JSON matching thi
   "fact_check_results": [{{"claim": string, "reviewer": string, "url": string, "rating": string}}],
   "timestamp": string (ISO8601)
 }}
+
 Claim: "{claim_text}"
 
 Evidence:
@@ -400,13 +563,15 @@ Evidence:
 Fact check summaries:
 {fact_check_section}
 
+Image context:
+- If an image is attached, interpret its visual elements (text, symbols, people, or scenes) in relation to the claim.
+- Determine if the image is authentic, unrelated, or possibly manipulated.
+- If no image is provided, ignore this instruction.
+
 Rules:
-- If the claim references a year greater than {current_year}, set verdict to "unknown" with low confidence and explain it refers to a future event.
-- If no direct evidence is available, analyze plausibility using historical knowledge up to {current_year}.
-- Use only the evidence provided or well-established knowledge.
-- Include reasoning in the explanation even when evidence is missing.
-- Include relevant URLs in the citations array when available.
-- Keep the explanation clear and concise.
+- If the claim references a future year beyond {current_year}, set verdict to "unverifiable" with low confidence and explain why.
+- If no direct evidence exists, reason using historical and factual context.
+- Keep explanations concise and directly related to the claim and any attached image.
 """
 
         model = GenerativeModel(GEMINI_MODEL)
@@ -545,7 +710,6 @@ async def log_request(request_id: str, text: str, mode: str, language: str,
     except Exception as e:
         logging.error(f"BigQuery logging failed: {e}")
 
-# API Endpoints
 @app.get("/healthz")
 async def health_check():
     """Health check endpoint"""
@@ -569,11 +733,40 @@ async def verify_claim_test(request: dict):
         )
         response_payload = bundle["result"].copy()
         response_payload["request_id"] = request_id
+        # Ensure manipulation fields present
+        if "manipulation_technique" not in response_payload or "manipulation_explanation" not in response_payload:
+            # Fallback: run manipulation detection if not present
+            try:
+                manipulation_prompt_claim = f"""You are a manipulation detection assistant. Given the following claim, detect if it shows signs of manipulation, misinformation, or deceptive techniques. Respond in JSON:
+{{
+  "manipulation_technique": "none | clickbait | misleading | scam | phishing | deepfake | unknown | other",
+  "explanation": string
+}}
+
+Claim: {bundle.get('claim_text','')}
+"""
+                model = GenerativeModel(GEMINI_MODEL)
+                loop = asyncio.get_event_loop()
+                def call_model():
+                    try:
+                        response = model.generate_content([Part.from_text(manipulation_prompt_claim)])
+                        parsed = _parse_json_from_text(response.text)
+                        if parsed:
+                            return parsed
+                    except Exception as e:
+                        logging.error(f"Gemini manipulation detection (claim) failed: {e}")
+                    return None
+                manipulation = await loop.run_in_executor(executor, call_model)
+                response_payload["manipulation_technique"] = manipulation.get("manipulation_technique") if manipulation else None
+                response_payload["manipulation_explanation"] = manipulation.get("explanation") if manipulation else None
+            except Exception as e:
+                logging.error(f"Manipulation detection (verify-test) failed: {e}")
+                response_payload["manipulation_technique"] = None
+                response_payload["manipulation_explanation"] = None
         return response_payload
     except Exception as e:
         logging.error(f"/verify-test failed: {e}")
         return {"request_id": request_id, "error": "Verification failed", "verdict": "error"}
-
 
 @app.post("/v1/verify")
 async def verify_claim(
@@ -588,8 +781,6 @@ async def verify_claim(
     request_id = str(uuid.uuid4())
 
     try:
-        # Input preprocessing
-        # If text is None or missing, set to empty string
         text_value = text if text is not None else ""
         detected_lang = detect_language(text_value)
         if language == "auto":
@@ -620,11 +811,39 @@ async def verify_claim(
             }
         )
 
-        # Calculate metrics
+        # Ensure manipulation fields present
+        if "manipulation_technique" not in final_result or "manipulation_explanation" not in final_result:
+            try:
+                manipulation_prompt_claim = f"""You are a manipulation detection assistant. Given the following claim, detect if it shows signs of manipulation, misinformation, or deceptive techniques. Respond in JSON:
+{{
+  "manipulation_technique": "none | clickbait | misleading | scam | phishing | deepfake | unknown | other",
+  "explanation": string
+}}
+
+Claim: {bundle.get('claim_text','')}
+"""
+                model = GenerativeModel(GEMINI_MODEL)
+                loop = asyncio.get_event_loop()
+                def call_model():
+                    try:
+                        response = model.generate_content([Part.from_text(manipulation_prompt_claim)])
+                        parsed = _parse_json_from_text(response.text)
+                        if parsed:
+                            return parsed
+                    except Exception as e:
+                        logging.error(f"Gemini manipulation detection (claim) failed: {e}")
+                    return None
+                manipulation = await loop.run_in_executor(executor, call_model)
+                final_result["manipulation_technique"] = manipulation.get("manipulation_technique") if manipulation else None
+                final_result["manipulation_explanation"] = manipulation.get("explanation") if manipulation else None
+            except Exception as e:
+                logging.error(f"Manipulation detection (verify) failed: {e}")
+                final_result["manipulation_technique"] = None
+                final_result["manipulation_explanation"] = None
+
         latency = (datetime.utcnow() - start_time).total_seconds() * 1000
         cost = calculate_cost(mode, len(text_value), image_data is not None)
 
-        # Store evidence and log request
         await asyncio.gather(
             store_evidence(request_id, image_data, final_result, existing_image_uri=bundle.get("image_uri"), image_mime=image_mime),
             log_request(request_id, text_value, mode, language,
@@ -632,17 +851,95 @@ async def verify_claim(
                        latency, cost)
         )
 
-        # Add metrics to response
         final_result["metrics"] = {
             "latency_ms": latency,
             "cost_usd": cost
         }
-
         return final_result
-
     except Exception as e:
         logging.error(f"Verification failed for request {request_id}: {e}")
         raise HTTPException(status_code=500, detail="Verification failed")
+
+# --- URL Verification Endpoints ---
+@app.post("/v1/verify_url")
+async def verify_url_endpoint(request: dict, api_key: str = Depends(verify_api_key)):
+    """
+    Verify a URL for safety and manipulation.
+    Request JSON: { "url": "..." }
+    Response JSON: { "input_type": "url", "timestamp": "...", "webrisk_status": "...", "manipulation_technique": "...", ... }
+    """
+    url = request.get("url")
+    if not url or not isinstance(url, str):
+        raise HTTPException(status_code=400, detail="Missing or invalid 'url'")
+    now = datetime.utcnow().isoformat()
+    # Check cache first
+    cached = get_cached_link_verification(url)
+    if cached:
+        cached["cached"] = True
+        cached["timestamp"] = now
+        # Ensure manipulation fields are present
+        if "manipulation_technique" not in cached or "manipulation_explanation" not in cached:
+            cached["manipulation_technique"] = None
+            cached["manipulation_explanation"] = None
+        return cached
+    # Run checks
+    webrisk = await check_webrisk(url)
+    metadata = await fetch_url_metadata(url)
+    manipulation = await detect_manipulation_gemini(url, metadata)
+    result = {
+        "input_type": "url",
+        "timestamp": now,
+        "url": url,
+        "webrisk_status": webrisk.get("webrisk_status"),
+        "webrisk_detail": webrisk,
+        "metadata": metadata,
+    }
+    # Merge manipulation fields as per instructions
+    result.update({
+        "manipulation_technique": manipulation.get("manipulation_technique"),
+        "manipulation_explanation": manipulation.get("explanation")
+    })
+    cache_link_verification(url, result)
+    return result
+
+@app.post("/v1/scan-link")
+async def scan_link_endpoint(request: dict, api_key: str = Depends(verify_api_key)):
+    """
+    Scan a link for safety, manipulation, and return unified JSON schema.
+    Request JSON: { "url": "..." }
+    Response JSON: { "input_type": "url", "timestamp": "...", "manipulation_technique": "...", ... }
+    """
+    url = request.get("url")
+    if not url or not isinstance(url, str):
+        raise HTTPException(status_code=400, detail="Missing or invalid 'url'")
+    now = datetime.utcnow().isoformat()
+    cached = get_cached_link_verification(url)
+    if cached:
+        cached["cached"] = True
+        cached["timestamp"] = now
+        # Ensure manipulation fields are present
+        if "manipulation_technique" not in cached or "manipulation_explanation" not in cached:
+            cached["manipulation_technique"] = None
+            cached["manipulation_explanation"] = None
+        return cached
+    webrisk = await check_webrisk(url)
+    metadata = await fetch_url_metadata(url)
+    manipulation = await detect_manipulation_gemini(url, metadata)
+    result = {
+        "input_type": "url",
+        "timestamp": now,
+        "url": url,
+        "webrisk_status": webrisk.get("webrisk_status"),
+        "webrisk_detail": webrisk,
+        "metadata": metadata,
+    }
+    # Merge manipulation fields as per instructions
+    result.update({
+        "manipulation_technique": manipulation.get("manipulation_technique"),
+        "manipulation_explanation": manipulation.get("explanation")
+    })
+    cache_link_verification(url, result)
+    return result
 
 # Result combination
 def combine_results(gemini_result: Dict[str, Any], fact_check_result: Optional[Dict[str, Any]]) -> Dict[str, Any]:
