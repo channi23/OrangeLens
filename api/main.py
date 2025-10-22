@@ -44,8 +44,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
 # Security
 security = HTTPBearer()
+
+# --- Privacy Mode global variable ---
+PRIVACY_MODE = False
 
 PROJECT_ID = os.getenv("GOOGLE_CLOUD_PROJECT", "orange-lens-472108")
 LOCATION = os.getenv("GOOGLE_CLOUD_LOCATION", "us-central1")
@@ -68,6 +72,68 @@ bigquery_client = bigquery.Client()
 secret_client = secretmanager.SecretManagerServiceClient()
 executor = ThreadPoolExecutor(max_workers=4)
 # --- Link Verification Helpers ---
+
+# --- Claim Verification Cache Helpers (Unified cache_key approach) ---
+def get_claim_cache_table():
+    table_name = f"{PROJECT_ID}.{DATASET_ID}.verification_cache"
+    return bigquery_client.dataset(DATASET_ID).table("verification_cache"), table_name
+
+def get_image_hash(image_bytes: bytes) -> str:
+    """Return SHA256 hash for image bytes."""
+    return hashlib.sha256(image_bytes).hexdigest() if image_bytes else ""
+
+def generate_cache_key(text: str, image_bytes: Optional[bytes]) -> str:
+    """
+    Generate a unified cache key as SHA256 hash of text and image bytes (if present).
+    """
+    h = hashlib.sha256()
+    h.update((text or "").encode())
+    if image_bytes:
+        h.update(image_bytes)
+    return h.hexdigest()
+
+def get_cached_verification(cache_key: str) -> Optional[dict]:
+    """Retrieve cached verification result from BigQuery using unified cache_key (30-day TTL)."""
+    try:
+        _, table_name = get_claim_cache_table()
+        query = f"""
+            SELECT data FROM `{table_name}`
+            WHERE cache_key = @cache_key
+              AND TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), timestamp, DAY) < 30
+            ORDER BY timestamp DESC
+            LIMIT 1
+        """
+        job = bigquery_client.query(query, job_config=bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter("cache_key", "STRING", cache_key),
+            ]
+        ))
+        rows = list(job)
+        if rows:
+            return json.loads(rows[0]["data"])
+    except Exception as e:
+        logging.error(f"BigQuery verification cache lookup failed: {e}")
+    return None
+
+def cache_verification(cache_key: str, data: dict, text: str):
+    """Cache new verification result in BigQuery using unified cache_key."""
+    try:
+        _, table_name = get_claim_cache_table()
+        row = {
+            "cache_key": cache_key,
+            "text": text[:1000],
+            "verdict": data.get("verdict", "unknown"),
+            "confidence": float(data.get("confidence", 0.0)),
+            "explanation": data.get("explanation", "")[:2000],
+            "citations": json.dumps(data.get("citations", [])),
+            "timestamp": datetime.utcnow().isoformat(),
+            "data": json.dumps(data)
+        }
+        errors = bigquery_client.insert_rows_json(table_name, [row])
+        if errors:
+            logging.error(f"BigQuery cache insert errors: {errors}")
+    except Exception as e:
+        logging.error(f"BigQuery cache insert failed: {e}")
 def get_url_hash(url: str) -> str:
     return hashlib.sha256(url.encode()).hexdigest()
 
@@ -98,6 +164,7 @@ def get_cached_link_verification(url: str) -> Optional[dict]:
         query = f"""
             SELECT data FROM `{table_name}`
             WHERE url_hash = @url_hash
+              AND TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), timestamp, DAY) < 30
             ORDER BY timestamp DESC
             LIMIT 1
         """
@@ -350,6 +417,20 @@ async def process_verification_request(
     if language == "auto":
         language = detect_language(text)
 
+    # --- Cache check (unified cache_key) ---
+    cache_key = generate_cache_key(text or "", image_bytes)
+    cached = get_cached_verification(cache_key)
+    if cached:
+        cached["cached"] = True
+        return {
+            "result": cached,
+            "claim_text": text,
+            "image_uri": None,
+            "evidence_entries": [],
+            "fact_check_results": [],
+            "citations_raw": []
+        }
+
     claim_text = (text or "").strip()
     image_refs: Optional[Dict[str, str]] = None
     image_uri = None
@@ -479,6 +560,9 @@ Claim: {claim_text}
     gemini_result.setdefault("language", language)
     gemini_result.setdefault("mode", mode)
     gemini_result.setdefault("timestamp", datetime.utcnow().isoformat())
+
+    # --- Cache the result (unified cache_key) ---
+    cache_verification(cache_key, gemini_result, claim_text)
 
     return {
         "result": gemini_result,
@@ -684,29 +768,31 @@ async def store_evidence(
         logging.error(f"Storage operation failed: {e}")
 
 # BigQuery logging
-async def log_request(request_id: str, text: str, mode: str, language: str, 
+async def log_request(request_id: str, text: str, mode: str, language: str,
                      verdict: str, confidence: float, latency: float, cost: float):
     """Log request to BigQuery"""
     try:
         table = bigquery_client.get_table(f"{PROJECT_ID}.{DATASET_ID}.{TABLE_ID}")
-        
+        # Redact text if privacy mode is enabled
+        global PRIVACY_MODE
+        log_text = text
+        if PRIVACY_MODE:
+            log_text = '[REDACTED]'
         row = {
             "request_id": request_id,
             "timestamp": datetime.utcnow().isoformat(),
-            "text": text[:1000],  # Truncate long text
+            "text": log_text[:1000],  # Truncate long text
             "mode": mode,
             "language": language,
             "verdict": verdict,
             "confidence": confidence,
             "latency_ms": latency,
             "cost_usd": cost,
-            "user_hash": hashlib.sha256(text.encode()).hexdigest()[:16]  # Anonymized user ID
+            "user_hash": hashlib.sha256((log_text or '').encode()).hexdigest()[:16]  # Anonymized user ID
         }
-        
         errors = bigquery_client.insert_rows_json(table, [row])
         if errors:
             logging.error(f"BigQuery insert errors: {errors}")
-            
     except Exception as e:
         logging.error(f"BigQuery logging failed: {e}")
 
@@ -774,12 +860,18 @@ async def verify_claim(
     mode: str = Form("fast"),
     language: str = Form("en"),
     image: Optional[UploadFile] = File(None),
+    privacy: bool = Form(False),
     api_key: str = Depends(verify_api_key)
 ):
     """Main verification endpoint. Accepts optional text and image."""
     start_time = datetime.utcnow()
     request_id = str(uuid.uuid4())
 
+    global PRIVACY_MODE
+    # Determine privacy mode for this request
+    local_privacy_mode = bool(privacy)
+    prev_privacy_mode = PRIVACY_MODE
+    PRIVACY_MODE = local_privacy_mode
     try:
         text_value = text if text is not None else ""
         detected_lang = detect_language(text_value)
@@ -788,14 +880,17 @@ async def verify_claim(
 
         image_data = None
         image_mime = "image/jpeg"
-        if image:
+        # If privacy mode, skip image upload and text logging (handled in log_request)
+        if not local_privacy_mode and image:
             if getattr(image, "content_type", None):
                 image_mime = image.content_type or image_mime
             image_data = await image.read()
-
+        elif local_privacy_mode:
+            image_data = None
+        # Redact text if privacy mode
         bundle = await process_verification_request(
             request_id=request_id,
-            text=text_value,
+            text="[REDACTED]" if local_privacy_mode else text_value,
             language=language,
             mode=mode,
             image_bytes=image_data,
@@ -844,8 +939,9 @@ Claim: {bundle.get('claim_text','')}
         latency = (datetime.utcnow() - start_time).total_seconds() * 1000
         cost = calculate_cost(mode, len(text_value), image_data is not None)
 
+        # Only store evidence if not in privacy mode
         await asyncio.gather(
-            store_evidence(request_id, image_data, final_result, existing_image_uri=bundle.get("image_uri"), image_mime=image_mime),
+            store_evidence(request_id, image_data, final_result, existing_image_uri=bundle.get("image_uri"), image_mime=image_mime) if not local_privacy_mode else asyncio.sleep(0),
             log_request(request_id, text_value, mode, language,
                        final_result["verdict"], final_result["confidence"],
                        latency, cost)
@@ -859,6 +955,9 @@ Claim: {bundle.get('claim_text','')}
     except Exception as e:
         logging.error(f"Verification failed for request {request_id}: {e}")
         raise HTTPException(status_code=500, detail="Verification failed")
+    finally:
+        # Restore previous privacy mode to avoid leaking state between requests
+        PRIVACY_MODE = prev_privacy_mode
 
 # --- URL Verification Endpoints ---
 @app.post("/v1/verify_url")
@@ -1002,3 +1101,287 @@ def calculate_cost(mode: str, text_length: int, has_image: bool) -> float:
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", 8080)))
+
+#
+# --- Configuration environment variables ---
+#   GOOGLE_CLOUD_PROJECT, GOOGLE_CLOUD_LOCATION, STORAGE_BUCKET, BIGQUERY_DATASET,
+#   BIGQUERY_TABLE, SERPER_API_KEY, SERPER_API_ENDPOINT, WEBRISK_API_KEY,
+#   GEMINI_MODEL, GEMINI_MODE, FACT_CHECK_API_KEY, BIGQUERY_AUTO_TABLE
+# --- New Endpoints: /v1/history, /v1/trending, /v1/privacy_mode ---
+
+from fastapi.responses import JSONResponse
+
+@app.get("/v1/history")
+async def get_history(api_key: str = Depends(verify_api_key)):
+    """
+    Get last 10 verification requests from BigQuery.
+    Returns: { "history": [ ... ] }
+    """
+    try:
+        query = f"""
+            SELECT request_id, timestamp, text, verdict, confidence, mode, language
+            FROM `{PROJECT_ID}.{DATASET_ID}.{TABLE_ID}`
+            ORDER BY timestamp DESC
+            LIMIT 10
+        """
+        rows = bigquery_client.query(query)
+        history = []
+        for row in rows:
+            history.append({
+                "request_id": row.get("request_id") if hasattr(row, "get") else row.request_id,
+                "timestamp": row.get("timestamp") if hasattr(row, "get") else row.timestamp,
+                "text": row.get("text") if hasattr(row, "get") else row.text,
+                "verdict": row.get("verdict") if hasattr(row, "get") else row.verdict,
+                "confidence": row.get("confidence") if hasattr(row, "get") else row.confidence,
+                "mode": row.get("mode") if hasattr(row, "get") else row.mode,
+                "language": row.get("language") if hasattr(row, "get") else row.language,
+            })
+        return {"history": history}
+    except Exception as e:
+        logging.error(f"Failed to fetch history: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch history")
+
+
+@app.get("/v1/trending")
+async def get_trending(api_key: str = Depends(verify_api_key)):
+    """
+    Get top 10 most frequent claims (text) from last 48 hours.
+    Returns: { "trending": [ ... ] }
+    """
+    try:
+        since = (datetime.utcnow() - timedelta(hours=48)).isoformat()
+        query = f"""
+            SELECT text, COUNT(*) as count, MAX(timestamp) as last_seen
+            FROM `{PROJECT_ID}.{DATASET_ID}.{TABLE_ID}`
+            WHERE timestamp >= '{since}'
+            GROUP BY text
+            ORDER BY count DESC, last_seen DESC
+            LIMIT 10
+        """
+        rows = bigquery_client.query(query)
+        trending = []
+        for row in rows:
+            trending.append({
+                "text": row.get("text") if hasattr(row, "get") else row.text,
+                "count": row.get("count") if hasattr(row, "get") else row.count,
+                "last_seen": row.get("last_seen") if hasattr(row, "get") else row.last_seen,
+            })
+        return {"trending": trending}
+    except Exception as e:
+        logging.error(f"Failed to fetch trending: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch trending")
+
+
+# --- Auto Trending (Headlines) helpers ---
+
+AUTO_TABLE_ID = os.getenv("BIGQUERY_AUTO_TABLE", "auto_verifications")
+
+def get_auto_table_fqn() -> str:
+    """Fully-qualified table name for auto verifications."""
+    return f"{PROJECT_ID}.{DATASET_ID}.{AUTO_TABLE_ID}"
+
+async def save_auto_verification_row(row: Dict[str, Any]) -> None:
+    """Insert one auto-verification row into BigQuery."""
+    try:
+        table_fqn = get_auto_table_fqn()
+        # Ensure string types for large fields
+        payload = [{
+            "request_id": row.get("request_id"),
+            "timestamp": row.get("timestamp"),
+            "text": (row.get("text") or "")[:2000],
+            "verdict": row.get("verdict") or "unknown",
+            "confidence": float(row.get("confidence") or 0.0),
+            "explanation": (row.get("explanation") or "")[:5000],
+            "sources": json.dumps(row.get("sources") or []),
+            "language": row.get("language") or "en"
+        }]
+        errors = bigquery_client.insert_rows_json(table_fqn, payload)
+        if errors:
+            logging.error(f"BigQuery insert errors (auto_verifications): {errors}")
+    except Exception as e:
+        logging.error(f"Failed to save auto verification row: {e}")
+
+async def verify_headline_text(headline: str, lang_hint: str = "en") -> Dict[str, Any]:
+    """
+    Run the same verification pipeline for a text-only headline.
+    Returns a compact dict suitable for storage in auto_verifications.
+    """
+    try:
+        language = lang_hint or "en"
+        if language == "auto":
+            language = detect_language(headline or "")
+        # Retrieve evidence
+        bundle = await retrieve_supporting_evidence(headline, language)
+        evidence_entries = bundle.get("evidence", [])
+        fact_check_raw = bundle.get("fact_check_results", [])
+        # Normalize fact-checks
+        normalized_fact_checks: List[Dict[str, Any]] = []
+        for claim in fact_check_raw:
+            claim_text_fc = claim.get("text", "")
+            for review in claim.get("claimReview", []):
+                reviewer = review.get("publisher", {})
+                reviewer_name = reviewer.get("name", "") if isinstance(reviewer, dict) else (reviewer or "")
+                normalized_fact_checks.append({
+                    "claim": claim_text_fc or review.get("title", ""),
+                    "reviewer": reviewer_name,
+                    "url": review.get("url", ""),
+                    "rating": review.get("textualRating", ""),
+                })
+        # Call Gemini
+        gemini_out = await verify_with_gemini(
+            claim_text=headline,
+            language=language,
+            evidence=evidence_entries,
+            fact_check_results=normalized_fact_checks,
+            image_bytes=None,
+            image_mime="image/jpeg",
+        )
+        # Normalize citations
+        citations: List[Dict[str, Any]] = []
+        for entry in gemini_out.get("citations") or []:
+            if isinstance(entry, dict):
+                citations.append({
+                    "title": entry.get("title") or entry.get("url") or "Source",
+                    "url": entry.get("url", ""),
+                    "source": entry.get("source", entry.get("publisher", "")),
+                })
+            elif isinstance(entry, str):
+                citations.append({"title": entry, "url": entry, "source": ""})
+        return {
+            "verdict": (gemini_out.get("verdict") or "unknown").lower(),
+            "confidence": float(gemini_out.get("confidence") or 0.0),
+            "explanation": gemini_out.get("explanation") or "",
+            "sources": citations or evidence_entries,
+            "language": language,
+        }
+    except Exception as e:
+        logging.error(f"verify_headline_text failed: {e}")
+        return {
+            "verdict": "error",
+            "confidence": 0.0,
+            "explanation": "verification failed",
+            "sources": [],
+            "language": lang_hint or "en",
+        }
+
+async def fetch_recent_headlines(limit: int = 12, hl: str = "en") -> List[str]:
+    """
+    Use Serper News API to fetch recent headlines to verify automatically.
+    """
+    if not SERPER_API_KEY:
+        logging.warning("SERPER_API_KEY not set; auto scan will do nothing.")
+        return []
+    headers = {"X-API-KEY": SERPER_API_KEY, "Content-Type": "application/json"}
+    payload = {"q": "*", "num": max(1, min(limit, 20)), "hl": hl}
+    try:
+        resp = requests.post(SERPER_API_ENDPOINT, headers=headers, json=payload, timeout=15)
+        resp.raise_for_status()
+        data = resp.json()
+        headlines = []
+        for item in data.get("news", [])[:limit]:
+            title = item.get("title") or ""
+            # Basic cleanup
+            title = re.sub(r"\s+", " ", title).strip()
+            if title:
+                headlines.append(title)
+        return headlines
+    except Exception as exc:
+        logging.error(f"fetch_recent_headlines failed: {exc}")
+        return []
+
+async def run_auto_scan(limit: int = 12, lang: str = "en") -> Dict[str, Any]:
+    """
+    Fetch recent headlines and verify them, store into BigQuery.
+    Returns summary counts.
+    """
+    request_ts = datetime.utcnow().isoformat()
+    headlines = await fetch_recent_headlines(limit=limit, hl=lang)
+    total = 0
+    stored = 0
+    results: List[Dict[str, Any]] = []
+    for h in headlines:
+        total += 1
+        rid = str(uuid.uuid4())
+        out = await verify_headline_text(h, lang_hint=lang)
+        row = {
+            "request_id": rid,
+            "timestamp": request_ts,
+            "text": h,
+            "verdict": out["verdict"],
+            "confidence": out["confidence"],
+            "explanation": out["explanation"],
+            "sources": out["sources"],
+            "language": out["language"],
+        }
+        await save_auto_verification_row(row)
+        stored += 1
+        # Only return lightweight preview to caller
+        results.append({
+            "request_id": rid,
+            "text": h,
+            "verdict": out["verdict"],
+            "confidence": out["confidence"],
+        })
+    return {"scanned": total, "stored": stored, "results": results}
+@app.post("/v1/auto_scan")
+async def auto_scan_endpoint(
+    request: Dict[str, Any] = None,
+    api_key: str = Depends(verify_api_key)
+):
+    """
+    Manually trigger an auto scan of recent headlines.
+    Body JSON (optional): { "limit": 12, "language": "en" }
+    """
+    req = request or {}
+    limit = int(req.get("limit", 12)) if isinstance(req, dict) else 12
+    language = (req.get("language") if isinstance(req, dict) else "en") or "en"
+    summary = await run_auto_scan(limit=limit, lang=language)
+    return {"ok": True, "summary": summary}
+
+
+@app.get("/v1/auto_trending")
+async def auto_trending_endpoint(api_key: str = Depends(verify_api_key)):
+    """
+    Return recent auto-verified items that are likely misinformation.
+    Filters verdict in ('false','misleading') in the last 72 hours.
+    """
+    try:
+        table_fqn = get_auto_table_fqn()
+        since = (datetime.utcnow() - timedelta(hours=72)).isoformat()
+        query = f"""
+            SELECT request_id, timestamp, text, verdict, confidence, language
+            FROM `{table_fqn}`
+            WHERE timestamp >= '{since}'
+              AND LOWER(verdict) IN ('false','misleading')
+            ORDER BY timestamp DESC
+            LIMIT 20
+        """
+        rows = bigquery_client.query(query)
+        items: List[Dict[str, Any]] = []
+        for row in rows:
+            items.append({
+                "request_id": getattr(row, "request_id", None),
+                "timestamp": getattr(row, "timestamp", None),
+                "text": getattr(row, "text", ""),
+                "verdict": getattr(row, "verdict", "unknown"),
+                "confidence": float(getattr(row, "confidence", 0.0) or 0.0),
+                "language": getattr(row, "language", "en"),
+            })
+        return {"items": items}
+    except Exception as e:
+        logging.error(f"auto_trending query failed: {e}")
+        raise HTTPException(status_code=500, detail="Failed to load auto trending")
+
+
+from fastapi import Form
+
+@app.post("/v1/privacy_mode")
+async def set_privacy_mode(privacy: bool = Form(...)):
+    """
+    Set or unset privacy mode for the API (global variable).
+    Accepts form-data with 'privacy' boolean.
+    Returns: { "privacy_mode": true/false }
+    """
+    global PRIVACY_MODE
+    PRIVACY_MODE = bool(privacy)
+    return {"privacy_mode": PRIVACY_MODE}
