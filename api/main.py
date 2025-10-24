@@ -222,6 +222,59 @@ def generate_cache_key(text: str, image_bytes: Optional[bytes]) -> str:
         h.update(image_bytes)
     return h.hexdigest()
 
+async def refresh_cache_if_stale(cache_key: str, text: str, image_bytes: Optional[bytes], image_mime: str):
+    """
+    Asynchronously refresh the cache if the cache is older than 12 hours.
+    """
+    if bigquery_client is None:
+        return
+    try:
+        _, table_name = get_claim_cache_table()
+        query = f"""
+            SELECT timestamp FROM `{table_name}`
+            WHERE cache_key = @cache_key
+              AND TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), timestamp, DAY) < 30
+            ORDER BY timestamp DESC
+            LIMIT 1
+        """
+        job = bigquery_client.query(
+            query,
+            job_config=bigquery.QueryJobConfig(
+                query_parameters=[
+                    bigquery.ScalarQueryParameter("cache_key", "STRING", cache_key)
+                ]
+            )
+        )
+        rows = list(job)
+        if not rows:
+            return
+        ts = rows[0]["timestamp"]
+        # Parse timestamp as datetime
+        if isinstance(ts, str):
+            ts_dt = datetime.fromisoformat(ts.replace("Z", "+00:00")) if "T" in ts else datetime.strptime(ts, "%Y-%m-%d %H:%M:%S.%f%z")
+        else:
+            ts_dt = ts
+        age_hours = (datetime.utcnow() - ts_dt.replace(tzinfo=None)).total_seconds() / 3600.0
+        if age_hours > 12:
+            # Refresh: re-run verification and cache it
+            request_id = str(uuid.uuid4())
+            try:
+                # Use text and image_bytes as available
+                bundle = await process_verification_request(
+                    request_id=request_id,
+                    text=text,
+                    language="en",
+                    mode="fast",
+                    image_bytes=image_bytes,
+                    image_mime=image_mime,
+                )
+                # Already cached by process_verification_request
+                logging.info(f"Refreshed cache for {cache_key} (age: {age_hours:.1f}h)")
+            except Exception as e:
+                logging.error(f"Cache refresh failed for {cache_key}: {e}")
+    except Exception as e:
+        logging.error(f"Cache refresh check failed: {e}")
+
 def get_cached_verification(cache_key: str) -> Optional[dict]:
     """Retrieve cached verification result from BigQuery using unified cache_key (30-day TTL)."""
     if bigquery_client is None:
@@ -229,7 +282,7 @@ def get_cached_verification(cache_key: str) -> Optional[dict]:
     try:
         _, table_name = get_claim_cache_table()
         query = f"""
-            SELECT data FROM `{table_name}`
+            SELECT data, text, timestamp FROM `{table_name}`
             WHERE cache_key = @cache_key
               AND TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), timestamp, DAY) < 30
             ORDER BY timestamp DESC
@@ -242,6 +295,15 @@ def get_cached_verification(cache_key: str) -> Optional[dict]:
         ))
         rows = list(job)
         if rows:
+            # Schedule async refresh if stale (don't block)
+            try:
+                # Use text from row for refresh
+                row = rows[0]
+                text = row.get("text") if hasattr(row, "get") else row.text
+                # Schedule the async refresh (image_bytes not available here; only text)
+                asyncio.create_task(refresh_cache_if_stale(cache_key, text, None, "image/jpeg"))
+            except Exception as e:
+                logging.error(f"Failed to schedule cache refresh: {e}")
             return json.loads(rows[0]["data"])
     except Exception as e:
         logging.error(f"BigQuery verification cache lookup failed: {e}")
@@ -1041,6 +1103,251 @@ async def verify_api_key(credentials: HTTPAuthorizationCredentials = Depends(sec
         raise HTTPException(status_code=503, detail="BigQuery client unavailable for validation")
     await validate_api_key_usage(api_key)
     return api_key
+# --- Feedback Endpoint ---
+from fastapi.responses import JSONResponse
+from fastapi import Query
+
+# --- Feedback Endpoint + Feedback Stats + Confidence Adjustment + Retraining Queue ---
+
+# Helper: async BigQuery query for feedback stats
+async def get_feedback_stats(request_id: Optional[str] = None, limit: int = 10):
+    if bigquery_client is None:
+        raise HTTPException(status_code=503, detail="BigQuery client unavailable")
+    feedback_table = f"{PROJECT_ID}.{DATASET_ID}.feedback"
+    # Build query
+    if request_id:
+        query = f"""
+            SELECT
+                request_id,
+                SUM(CASE WHEN feedback='upvote' THEN 1 ELSE 0 END) AS upvotes,
+                SUM(CASE WHEN feedback='downvote' THEN 1 ELSE 0 END) AS downvotes
+            FROM `{feedback_table}`
+            WHERE request_id = @request_id
+            GROUP BY request_id
+        """
+        params = [bigquery.ScalarQueryParameter("request_id", "STRING", request_id)]
+    else:
+        query = f"""
+            SELECT
+                request_id,
+                SUM(CASE WHEN feedback='upvote' THEN 1 ELSE 0 END) AS upvotes,
+                SUM(CASE WHEN feedback='downvote' THEN 1 ELSE 0 END) AS downvotes
+            FROM `{feedback_table}`
+            GROUP BY request_id
+            ORDER BY (SUM(CASE WHEN feedback='upvote' THEN 1 ELSE 0 END) + SUM(CASE WHEN feedback='downvote' THEN 1 ELSE 0 END)) DESC
+            LIMIT {limit}
+        """
+        params = []
+    job = bigquery_client.query(query, job_config=bigquery.QueryJobConfig(query_parameters=params))
+    rows = list(job)
+    stats = []
+    for row in rows:
+        upvotes = int(row["upvotes"])
+        downvotes = int(row["downvotes"])
+        stats.append({
+            "request_id": row["request_id"],
+            "upvotes": upvotes,
+            "downvotes": downvotes,
+            "net_score": upvotes - downvotes,
+        })
+    return stats
+
+
+@app.get("/v1/feedback/stats")
+async def feedback_stats_endpoint(
+    request_id: Optional[str] = Query(None, description="Request ID to filter stats for"),
+    limit: int = Query(10, ge=1, le=50, description="Max items to return if no request_id"),
+    api_key: str = Depends(verify_api_key)
+):
+    """
+    Get feedback stats: upvotes, downvotes, net_score per request_id.
+    If request_id is provided, returns stats for that request.
+    Otherwise, returns top N most-voted items.
+    """
+    stats = await get_feedback_stats(request_id=request_id, limit=limit)
+    if request_id:
+        if stats:
+            return stats[0]
+        else:
+            return {"request_id": request_id, "upvotes": 0, "downvotes": 0, "net_score": 0}
+    return stats
+
+
+# Helper: adjust confidence in verification_cache if too many downvotes
+async def auto_adjust_confidence(request_id: str):
+    if bigquery_client is None:
+        return
+    # Count downvotes for this request_id
+    feedback_table = f"{PROJECT_ID}.{DATASET_ID}.feedback"
+    query = f"""
+        SELECT COUNT(*) AS downvote_count
+        FROM `{feedback_table}`
+        WHERE request_id = @request_id AND feedback = 'downvote'
+    """
+    job = bigquery_client.query(
+        query,
+        job_config=bigquery.QueryJobConfig(
+            query_parameters=[bigquery.ScalarQueryParameter("request_id", "STRING", request_id)]
+        )
+    )
+    rows = list(job)
+    downvote_count = int(rows[0]["downvote_count"]) if rows else 0
+    if downvote_count > 3:
+        # Find the cache_key for this request_id from verification_requests
+        table_fqn = f"{PROJECT_ID}.{DATASET_ID}.{TABLE_ID}"
+        query2 = f"SELECT text FROM `{table_fqn}` WHERE request_id=@request_id LIMIT 1"
+        job2 = bigquery_client.query(
+            query2,
+            job_config=bigquery.QueryJobConfig(
+                query_parameters=[bigquery.ScalarQueryParameter("request_id", "STRING", request_id)]
+            )
+        )
+        rows2 = list(job2)
+        if not rows2:
+            return
+        text = rows2[0].get("text") if hasattr(rows2[0], "get") else rows2[0].text
+        # The cache_key is generated from text and image_bytes=None
+        cache_key = generate_cache_key(text or "", None)
+        # Now, reduce confidence in verification_cache by 10%
+        _, cache_table = get_claim_cache_table()
+        # Get latest cached row
+        query3 = f"""
+            SELECT confidence, data, timestamp FROM `{cache_table}`
+            WHERE cache_key = @cache_key
+            ORDER BY timestamp DESC
+            LIMIT 1
+        """
+        job3 = bigquery_client.query(
+            query3,
+            job_config=bigquery.QueryJobConfig(
+                query_parameters=[bigquery.ScalarQueryParameter("cache_key", "STRING", cache_key)]
+            )
+        )
+        rows3 = list(job3)
+        if not rows3:
+            return
+        confidence = float(rows3[0]["confidence"])
+        data = rows3[0]["data"]
+        try:
+            data_json = json.loads(data)
+        except Exception:
+            data_json = {}
+        new_confidence = round(confidence * 0.9, 5)
+        data_json["confidence"] = new_confidence
+        # Insert as a new row (do not overwrite old row)
+        row = {
+            "cache_key": cache_key,
+            "text": text[:1000],
+            "verdict": data_json.get("verdict", "unknown"),
+            "confidence": new_confidence,
+            "explanation": data_json.get("explanation", "")[:2000],
+            "citations": json.dumps(data_json.get("citations", [])),
+            "timestamp": datetime.utcnow().isoformat(),
+            "data": json.dumps(data_json)
+        }
+        errors = bigquery_client.insert_rows_json(cache_table, [row])
+        if errors:
+            logging.error(f"BigQuery auto-adjust confidence insert errors: {errors}")
+
+# Helper: insert into retraining_queue table
+async def insert_retraining_queue(request_id: str, text: str, old_verdict: str, new_verdict: Optional[str]):
+    if bigquery_client is None:
+        return
+    # Create table if not exists (best effort, not blocking)
+    retrain_table = f"{PROJECT_ID}.{DATASET_ID}.retraining_queue"
+    # Table schema: request_id, text, old_verdict, new_verdict, timestamp
+    # Insert row
+    row = {
+        "request_id": request_id,
+        "text": text[:1000] if text else "",
+        "old_verdict": old_verdict,
+        "new_verdict": new_verdict,
+        "timestamp": datetime.utcnow().isoformat()
+    }
+    try:
+        bigquery_client.insert_rows_json(retrain_table, [row])
+    except Exception as e:
+        logging.error(f"Failed to insert into retraining_queue: {e}")
+
+
+@app.post("/v1/feedback")
+async def feedback_endpoint(request: Request, api_key: str = Depends(verify_api_key)):
+    """
+    Accept feedback on a verification request.
+    POST JSON: { "request_id": "...", "feedback": "upvote"|"downvote", "comment": "..." }
+    """
+    try:
+        data = await request.json()
+        request_id = data.get("request_id")
+        feedback = data.get("feedback")
+        comment = data.get("comment", "")
+        if not request_id or not feedback:
+            raise HTTPException(status_code=400, detail="Missing request_id or feedback")
+        if feedback not in ("upvote", "downvote"):
+            raise HTTPException(status_code=400, detail="Feedback must be 'upvote' or 'downvote'")
+        if bigquery_client is None:
+            raise HTTPException(status_code=503, detail="BigQuery client unavailable")
+        # Lookup original verification record
+        table_fqn = f"{PROJECT_ID}.{DATASET_ID}.{TABLE_ID}"
+        query = f"SELECT text, verdict FROM `{table_fqn}` WHERE request_id=@request_id LIMIT 1"
+        job = bigquery_client.query(
+            query,
+            job_config=bigquery.QueryJobConfig(
+                query_parameters=[bigquery.ScalarQueryParameter("request_id", "STRING", request_id)]
+            )
+        )
+        rows = list(job)
+        if not rows:
+            raise HTTPException(status_code=404, detail="Original request not found")
+        row = rows[0]
+        text = row.get("text") if hasattr(row, "get") else row.text
+        old_verdict = row.get("verdict") if hasattr(row, "get") else row.verdict
+        # Hash API key for privacy
+        api_key_hash = hashlib.sha256((api_key or "").encode()).hexdigest()
+        feedback_row = {
+            "request_id": request_id,
+            "timestamp": datetime.utcnow().isoformat(),
+            "feedback": feedback,
+            "comment": comment[:500],
+            "api_key": api_key_hash,
+            "old_verdict": old_verdict,
+            "new_verdict": None,
+        }
+        # If downvote, trigger re-verification
+        new_verdict = None
+        if feedback == "downvote":
+            try:
+                # Re-run verification (text only, no image for now)
+                bundle = await process_verification_request(
+                    request_id=str(uuid.uuid4()),
+                    text=text,
+                    language="en",
+                    mode="fast",
+                    image_bytes=None,
+                    image_mime="image/jpeg"
+                )
+                result = bundle.get("result", {})
+                new_verdict = result.get("verdict")
+                feedback_row["new_verdict"] = new_verdict
+            except Exception as e:
+                logging.error(f"Feedback re-verification failed: {e}")
+        # Log feedback to BigQuery
+        feedback_table = f"{PROJECT_ID}.{DATASET_ID}.feedback"
+        errors = bigquery_client.insert_rows_json(feedback_table, [feedback_row])
+        if errors:
+            logging.error(f"BigQuery feedback insert errors: {errors}")
+            raise HTTPException(status_code=500, detail="Failed to log feedback")
+        # --- Auto-adjust confidence if too many downvotes (run in background) ---
+        asyncio.create_task(auto_adjust_confidence(request_id))
+        # --- If downvote, insert into retraining queue (background) ---
+        if feedback == "downvote":
+            asyncio.create_task(insert_retraining_queue(request_id, text, old_verdict, feedback_row.get("new_verdict")))
+        return JSONResponse({"ok": True, "message": "Feedback received", "new_verdict": new_verdict})
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"Feedback endpoint error: {e}")
+        raise HTTPException(status_code=500, detail="Feedback processing failed")
 # --- URL Verification Endpoints ---
 # --- Public API Key Management Endpoints ---
 
