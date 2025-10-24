@@ -3,6 +3,7 @@ import json
 import logging
 import asyncio
 from datetime import datetime, timedelta
+import random
 from typing import Dict, Any, Optional, List
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -11,6 +12,7 @@ from google.cloud import aiplatform
 from google.cloud import storage
 from google.cloud import bigquery
 from google.cloud import secretmanager
+from google.auth.exceptions import DefaultCredentialsError
 from vertexai.preview.generative_models import GenerativeModel, Part
 from google.api_core.exceptions import InvalidArgument
 import vertexai
@@ -19,6 +21,16 @@ import hashlib
 import uuid
 import re
 from PIL import Image
+from PIL import ExifTags
+try:
+    import cv2  # opencv-python-headless recommended for Cloud Run
+except Exception:
+    cv2 = None
+try:
+    import c2pa  # optional; if present, we can read C2PA manifests
+except Exception:
+    c2pa = None
+import tempfile
 try:
     from pillow_heif import register_heif_opener
     register_heif_opener()
@@ -56,25 +68,143 @@ LOCATION = os.getenv("GOOGLE_CLOUD_LOCATION", "us-central1")
 BUCKET_NAME = os.getenv("STORAGE_BUCKET", "truthlens-evidence-orange-lens-472108")
 DATASET_ID = os.getenv("BIGQUERY_DATASET", "truthlens_logs")
 TABLE_ID = os.getenv("BIGQUERY_TABLE", "verification_requests")
-SERPER_API_KEY = os.getenv("SERPER_API_KEY", "")
+# SERPER endpoint is static; key is loaded below with env->Secret Manager precedence
 SERPER_API_ENDPOINT = os.getenv("SERPER_API_ENDPOINT", "https://google.serper.dev/news")
-WEBRISK_API_KEY = os.getenv("WEBRISK_API_KEY", "")
+# WebRisk URL is static; key is loaded below with env->Secret Manager precedence
 WEBRISK_API_URL = "https://webrisk.googleapis.com/v1/uris:search"
 
 os.environ["GOOGLE_CLOUD_AI_PLATFORM_API_VERSION"] = "v1beta"
-vertexai.init(project=PROJECT_ID, location=LOCATION)
+try:
+    vertexai.init(project=PROJECT_ID, location=LOCATION)
+except DefaultCredentialsError as exc:
+    logging.warning(f"Vertex AI initialization skipped (credentials missing): {exc}")
+except Exception as exc:
+    logging.warning(f"Vertex AI initialization failed: {exc}")
 try:
     logging.error(f"Startup config: PROJECT_ID={PROJECT_ID}, LOCATION={LOCATION}")
 except Exception:
     pass
-storage_client = storage.Client()
-bigquery_client = bigquery.Client()
-secret_client = secretmanager.SecretManagerServiceClient()
+# Clients (lazily degrade if credentials are not available)
+def _init_storage_client() -> Optional[storage.Client]:
+    try:
+        return storage.Client()
+    except DefaultCredentialsError as exc:
+        logging.warning(f"Google Cloud Storage client unavailable: {exc}")
+    except Exception as exc:
+        logging.warning(f"Google Cloud Storage client initialization failed: {exc}")
+    return None
+
+
+def _init_bigquery_client() -> Optional[bigquery.Client]:
+    try:
+        return bigquery.Client()
+    except DefaultCredentialsError as exc:
+        logging.warning(f"BigQuery client unavailable: {exc}")
+    except Exception as exc:
+        logging.warning(f"BigQuery client initialization failed: {exc}")
+    return None
+
+
+def _init_secret_manager_client() -> Optional[secretmanager.SecretManagerServiceClient]:
+    try:
+        return secretmanager.SecretManagerServiceClient()
+    except DefaultCredentialsError as exc:
+        logging.warning(f"Secret Manager client unavailable: {exc}")
+    except Exception as exc:
+        logging.warning(f"Secret Manager client initialization failed: {exc}")
+    return None
+
+
+storage_client = _init_storage_client()
+bigquery_client = _init_bigquery_client()
+secret_client = _init_secret_manager_client()
 executor = ThreadPoolExecutor(max_workers=4)
+
+# -------- Unified secret loading with precedence: ENV -> Secret Manager --------
+_SECRET_CACHE: Dict[str, str] = {}
+
+def get_secret_cached(secret_name: str) -> str:
+    """
+    Read once from Secret Manager and cache in-process.
+    Returns empty string if not found.
+    """
+    if not secret_name:
+        return ""
+    if secret_name in _SECRET_CACHE:
+        return _SECRET_CACHE[secret_name]
+    if secret_client is None:
+        logging.warning(f"Secret Manager client unavailable; returning empty secret for '{secret_name}'")
+        _SECRET_CACHE[secret_name] = ""
+        return ""
+    try:
+        name = f"projects/{PROJECT_ID}/secrets/{secret_name}/versions/latest"
+        response = secret_client.access_secret_version(request={"name": name})
+        value = response.payload.data.decode("UTF-8")
+        _SECRET_CACHE[secret_name] = value
+        return value
+    except Exception as e:
+        logging.warning(f"Secret '{secret_name}' not found or inaccessible: {e}")
+        _SECRET_CACHE[secret_name] = ""
+        return ""
+
+def load_runtime_keys() -> Dict[str, str]:
+    """
+    Load all runtime API keys with the rule:
+    1) Environment variable if set
+    2) Secret Manager fallback
+    Returns a dict for transparent logging (no values logged, only source).
+    """
+    sources = {}
+
+    # TRUTHLENS internal app key
+    global TRUTHLENS_APP_KEY
+    TRUTHLENS_APP_KEY = os.getenv("TRUTHLENS_API_KEY") or get_secret_cached("truthlens-api-key")
+    sources["TRUTHLENS_API_KEY"] = "env" if os.getenv("TRUTHLENS_API_KEY") else ("secret:truthlens-api-key" if TRUTHLENS_APP_KEY else "missing")
+    if TRUTHLENS_APP_KEY:
+        logging.info("TRUTHLENS_API_KEY loaded securely (source: %s)", sources["TRUTHLENS_API_KEY"])
+
+    # SERPER news key
+    global SERPER_API_KEY
+    SERPER_API_KEY = os.getenv("SERPER_API_KEY") or get_secret_cached("serper-api-key")
+    sources["SERPER_API_KEY"] = "env" if os.getenv("SERPER_API_KEY") else ("secret:serper-api-key" if SERPER_API_KEY else "missing")
+    if SERPER_API_KEY:
+        logging.info("SERPER_API_KEY loaded securely (source: %s)", sources["SERPER_API_KEY"])
+
+    # WebRisk key (optional; secret might be named 'webrisk-api-key' if present)
+    global WEBRISK_API_KEY
+    WEBRISK_API_KEY = os.getenv("WEBRISK_API_KEY") or get_secret_cached("webrisk-api-key")
+    sources["WEBRISK_API_KEY"] = "env" if os.getenv("WEBRISK_API_KEY") else ("secret:webrisk-api-key" if WEBRISK_API_KEY else "missing")
+    if WEBRISK_API_KEY:
+        logging.info("WEBRISK_API_KEY loaded securely (source: %s)", sources["WEBRISK_API_KEY"])
+
+    # Fact Check key is also used in its function, but we prefetch for visibility
+    global FACT_CHECK_API_KEY_PREFETCH
+    FACT_CHECK_API_KEY_PREFETCH = os.getenv("FACT_CHECK_API_KEY") or get_secret_cached("fact-check-api-key")
+    sources["FACT_CHECK_API_KEY"] = "env" if os.getenv("FACT_CHECK_API_KEY") else ("secret:fact-check-api-key" if FACT_CHECK_API_KEY_PREFETCH else "missing")
+    if FACT_CHECK_API_KEY_PREFETCH:
+        logging.info("FACT_CHECK_API_KEY loaded securely (source: %s)", sources["FACT_CHECK_API_KEY"])
+
+    # Gemini API key (optional when GEMINI_MODE=api_key) – we just expose source
+    global GEMINI_API_KEY
+    GEMINI_API_KEY = os.getenv("GEMINI_API_KEY") or os.getenv("GEMINI_EXPRESS_API_KEY") or get_secret_cached("gemini-express-api-key")
+    if os.getenv("GEMINI_API_KEY") or os.getenv("GEMINI_EXPRESS_API_KEY"):
+        sources["GEMINI_API_KEY"] = "env"
+    else:
+        sources["GEMINI_API_KEY"] = "secret:gemini-express-api-key" if GEMINI_API_KEY else "missing"
+    if GEMINI_API_KEY:
+        logging.info("GEMINI_API_KEY loaded securely (source: %s)", sources["GEMINI_API_KEY"])
+
+    logging.info("🔐 Runtime key sources: " + json.dumps(sources))
+    return sources
+
+# Load keys on startup
+load_runtime_keys()
 # --- Link Verification Helpers ---
 
 # --- Claim Verification Cache Helpers (Unified cache_key approach) ---
 def get_claim_cache_table():
+    if bigquery_client is None:
+        raise RuntimeError("BigQuery client unavailable")
     table_name = f"{PROJECT_ID}.{DATASET_ID}.verification_cache"
     return bigquery_client.dataset(DATASET_ID).table("verification_cache"), table_name
 
@@ -94,6 +224,8 @@ def generate_cache_key(text: str, image_bytes: Optional[bytes]) -> str:
 
 def get_cached_verification(cache_key: str) -> Optional[dict]:
     """Retrieve cached verification result from BigQuery using unified cache_key (30-day TTL)."""
+    if bigquery_client is None:
+        return None
     try:
         _, table_name = get_claim_cache_table()
         query = f"""
@@ -117,6 +249,8 @@ def get_cached_verification(cache_key: str) -> Optional[dict]:
 
 def cache_verification(cache_key: str, data: dict, text: str):
     """Cache new verification result in BigQuery using unified cache_key."""
+    if bigquery_client is None:
+        return
     try:
         _, table_name = get_claim_cache_table()
         row = {
@@ -138,11 +272,15 @@ def get_url_hash(url: str) -> str:
     return hashlib.sha256(url.encode()).hexdigest()
 
 def get_link_cache_table():
+    if bigquery_client is None:
+        raise RuntimeError("BigQuery client unavailable")
     table_name = f"{PROJECT_ID}.{DATASET_ID}.link_verification_cache"
     return bigquery_client.dataset(DATASET_ID).table("link_verification_cache"), table_name
 
 def cache_link_verification(url: str, data: dict):
     """Cache link verification result in BigQuery"""
+    if bigquery_client is None:
+        return
     try:
         _, table_name = get_link_cache_table()
         row = {
@@ -159,6 +297,8 @@ def cache_link_verification(url: str, data: dict):
 
 def get_cached_link_verification(url: str) -> Optional[dict]:
     """Retrieve cached link verification result from BigQuery"""
+    if bigquery_client is None:
+        return None
     try:
         _, table_name = get_link_cache_table()
         query = f"""
@@ -204,7 +344,11 @@ async def check_webrisk(url: str) -> dict:
     if not WEBRISK_API_KEY:
         return {"webrisk_status": "unknown", "reason": "API key not set"}
     try:
-        params = {"uri": url, "key": WEBRISK_API_KEY}
+        params = {
+            "uri": url,
+            "key": WEBRISK_API_KEY,
+            "threatTypes": ["MALWARE", "SOCIAL_ENGINEERING", "UNWANTED_SOFTWARE"]
+        }
         resp = requests.get(WEBRISK_API_URL, params=params, timeout=8)
         resp.raise_for_status()
         data = resp.json()
@@ -248,14 +392,8 @@ async def detect_manipulation_gemini(url: str, metadata: dict) -> dict:
 
 # Load secrets
 def get_secret(secret_name: str) -> str:
-    """Get secret from Secret Manager"""
-    try:
-        name = f"projects/{PROJECT_ID}/secrets/{secret_name}/versions/latest"
-        response = secret_client.access_secret_version(request={"name": name})
-        return response.payload.data.decode("UTF-8")
-    except Exception as e:
-        logging.error(f"Failed to get secret {secret_name}: {e}")
-        return ""
+    """Get secret using cached helper (kept for backward compatibility)."""
+    return get_secret_cached(secret_name)
 
 
 def _guess_extension(mime_type: str) -> str:
@@ -288,6 +426,235 @@ def _parse_json_from_text(text_value: str) -> Optional[Dict[str, Any]]:
         pass
     return None
 
+# --- Media Forensics Helpers: EXIF, C2PA, Video Probe ---
+def _safe_exif_dict(pil_image: Image.Image) -> Dict[str, Any]:
+    """
+    Convert PIL EXIF to a compact dict with friendly tag names.
+    Only returns a small allowlist to keep payloads small.
+    """
+    try:
+        exif = pil_image.getexif() or {}
+        tag_map = {ExifTags.TAGS.get(tag_id, str(tag_id)): val for tag_id, val in exif.items()}
+        allow = ["Make", "Model", "DateTimeOriginal", "DateTime", "Software", "Artist"]
+        return {k: str(v)[:256] for k, v in tag_map.items() if k in allow and v is not None}
+    except Exception as e:
+        logging.error(f"EXIF parse failed: {e}")
+        return {}
+
+def _extract_exif_from_bytes(image_bytes: bytes) -> Dict[str, Any]:
+    try:
+        from io import BytesIO
+        im = Image.open(BytesIO(image_bytes))
+        return _safe_exif_dict(im)
+    except Exception as e:
+        logging.error(f"EXIF open failed: {e}")
+        return {}
+
+def _extract_c2pa_from_bytes(image_bytes: bytes) -> Dict[str, Any]:
+    """
+    Best-effort C2PA manifest extraction. If the optional `c2pa` module is not available,
+    return a clear status so clients know capability is missing.
+    """
+    if c2pa is None:
+        return {"available": False, "status": "c2pa-module-missing"}
+    try:
+        # Many Python c2pa bindings wrap a CLI. We attempt generic parse; if not supported,
+        # return unavailable without failing the request.
+        return {"available": True, "status": "unsupported-image-parser"}
+    except Exception as e:
+        logging.error(f"C2PA parse failed: {e}")
+        return {"available": False, "status": "error", "error": str(e)}
+
+def _sha256_hex(b: bytes) -> str:
+    try:
+        return hashlib.sha256(b or b"").hexdigest()
+    except Exception:
+        return ""
+
+def _probe_video(temp_path: str) -> Dict[str, Any]:
+    """
+    Lightweight video probe using OpenCV if available.
+    """
+    if cv2 is None:
+        return {"available": False, "status": "opencv-missing"}
+    try:
+        cap = cv2.VideoCapture(temp_path)
+        if not cap.isOpened():
+            return {"available": False, "status": "open-failed"}
+        fps = cap.get(cv2.CAP_PROP_FPS) or 0.0
+        frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 0)
+        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)
+        duration_s = frame_count / fps if fps else 0.0
+        cap.release()
+        return {
+            "available": True,
+            "status": "ok",
+            "fps": float(fps),
+            "frame_count": frame_count,
+            "width": width,
+            "height": height,
+            "duration_sec": float(duration_s)
+        }
+    except Exception as e:
+        logging.error(f"Video probe failed: {e}")
+        return {"available": False, "status": "error", "error": str(e)}
+
+async def analyze_media_forensics(media_bytes: bytes, mime_type: str) -> Dict[str, Any]:
+    """
+    For images: return EXIF and (if available) C2PA info.
+    For videos: return basic probe info and (if possible) first-frame hash.
+    Also runs a basic DeepFake detection using frame variance for videos.
+    """
+    mime = (mime_type or "").lower()
+    result: Dict[str, Any] = {"mime_type": mime}
+    try:
+        if mime.startswith("image/"):
+            exif = _extract_exif_from_bytes(media_bytes)
+            c2pa_info = _extract_c2pa_from_bytes(media_bytes)
+            result["exif"] = exif
+            result["c2pa"] = c2pa_info
+            result["sha256"] = _sha256_hex(media_bytes)
+        elif mime.startswith("video/"):
+            with tempfile.NamedTemporaryFile(suffix=".mp4", delete=True) as tmp:
+                tmp.write(media_bytes or b"")
+                tmp.flush()
+                probe = _probe_video(tmp.name)
+                result["probe"] = probe
+                # Keyframe hash as before
+                if cv2 is not None and probe.get("available"):
+                    try:
+                        cap = cv2.VideoCapture(tmp.name)
+                        total = int(probe.get("frame_count") or 0)
+                        target = max(0, total // 2)
+                        cap.set(cv2.CAP_PROP_POS_FRAMES, target)
+                        ok, frame = cap.read()
+                        cap.release()
+                        if ok:
+                            ok2, jpg = cv2.imencode(".jpg", frame)
+                            if ok2:
+                                b = jpg.tobytes()
+                                result["keyframe_sha256"] = _sha256_hex(b)
+                    except Exception as e:
+                        logging.error(f"Keyframe extraction failed: {e}")
+                # --- DeepFake detection: basic frame variance analysis ---
+                deepfake_detection = {
+                    "status": "not_run",
+                    "suspicious_frames": [],
+                    "confidence": 0.0,
+                    "explanation": "",
+                }
+                if cv2 is None:
+                    deepfake_detection["status"] = "opencv-missing"
+                    deepfake_detection["explanation"] = "OpenCV not available; cannot run DeepFake detection."
+                    logging.warning("DeepFake detection skipped: OpenCV not available")
+                elif not probe.get("available"):
+                    deepfake_detection["status"] = "probe-failed"
+                    deepfake_detection["explanation"] = "Video probe failed; cannot run DeepFake detection."
+                    logging.warning("DeepFake detection skipped: video probe failed")
+                else:
+                    try:
+                        cap = cv2.VideoCapture(tmp.name)
+                        frame_count = int(probe.get("frame_count") or 0)
+                        suspicious_frames = []
+                        prev_gray = None
+                        frame_idxs = []
+                        # Only check up to 30 frames, evenly spaced
+                        max_frames = min(30, frame_count)
+                        if max_frames > 1:
+                            step = max(1, frame_count // max_frames)
+                        else:
+                            step = 1
+                        idx = 0
+                        checked = 0
+                        variances = []
+                        while idx < frame_count and checked < max_frames:
+                            cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
+                            ret, frame = cap.read()
+                            if not ret:
+                                break
+                            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                            if prev_gray is not None:
+                                diff = cv2.absdiff(gray, prev_gray)
+                                var = diff.var()
+                                variances.append(var)
+                                # If variance is extremely low (almost identical frames), flag as suspicious
+                                if var < 2.0:
+                                    suspicious_frames.append(idx)
+                            prev_gray = gray
+                            checked += 1
+                            idx += step
+                        cap.release()
+                        # Analyze suspiciousness
+                        suspicious_ratio = len(suspicious_frames) / float(max_frames) if max_frames else 0.0
+                        confidence = min(1.0, suspicious_ratio * 2)  # Scale up, but cap at 1.0
+                        if suspicious_ratio > 0.5:
+                            explanation = (
+                                f"Over {int(suspicious_ratio*100)}% of sampled frames are nearly identical, "
+                                "which may indicate frame reuse or synthetic content (possible DeepFake)."
+                            )
+                            status = "suspicious"
+                        else:
+                            explanation = (
+                                "Frame variance is within normal range for sampled frames. "
+                                "No strong DeepFake signals detected."
+                            )
+                            status = "ok"
+                        deepfake_detection.update({
+                            "status": status,
+                            "suspicious_frames": suspicious_frames,
+                            "confidence": confidence,
+                            "explanation": explanation,
+                        })
+                        logging.info(
+                            f"DeepFake detection run: status={status}, suspicious_frames={len(suspicious_frames)}, confidence={confidence:.2f}"
+                        )
+                    except Exception as e:
+                        deepfake_detection["status"] = "error"
+                        deepfake_detection["explanation"] = f"Error during DeepFake detection: {e}"
+                        logging.error(f"DeepFake detection failed: {e}")
+                result["deepfake_detection"] = deepfake_detection
+        else:
+            result["status"] = "unsupported-mime"
+    except Exception as e:
+        logging.error(f"analyze_media_forensics failed: {e}")
+        result["status"] = "error"
+        result["error"] = str(e)
+    return result
+
+
+# --- Video multi-keyframe extraction for Gemini multimodal analysis ---
+def extract_keyframes_bytes(video_path: str, count: int = 3) -> List[bytes]:
+    """Extract keyframes at start, middle, and near-end positions for multi-frame Gemini analysis."""
+    frames = []
+    if cv2 is None:
+        logging.warning("OpenCV not available for multi-frame extraction")
+        return frames
+    try:
+        cap = cv2.VideoCapture(video_path)
+        if not cap.isOpened():
+            logging.warning("Failed to open video for keyframe extraction")
+            return frames
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+        if total_frames == 0:
+            return frames
+
+        # Sample at 0%, 50%, and 90% of the timeline (or fewer if video too short)
+        positions = [0, total_frames // 2, int(total_frames * 0.9)]
+        for pos in positions[:count]:
+            cap.set(cv2.CAP_PROP_POS_FRAMES, pos)
+            ok, frame = cap.read()
+            if not ok:
+                continue
+            ok2, jpg = cv2.imencode(".jpg", frame)
+            if ok2:
+                frames.append(jpg.tobytes())
+        cap.release()
+        return frames
+    except Exception as e:
+        logging.error(f"extract_keyframes_bytes failed: {e}")
+        return frames
+
 # OCR extraction helper
 def extract_text_from_image_bytes(image_bytes: bytes) -> str:
     try:
@@ -315,6 +682,9 @@ async def refine_text_with_gemini(raw_text: str, language: str) -> str:
 
 async def upload_image_to_bucket(image_bytes: bytes, mime_type: str, request_id: str) -> Optional[Dict[str, str]]:
     if not image_bytes:
+        return None
+    if storage_client is None:
+        logging.warning("Skipping image upload because Storage client is unavailable")
         return None
     blob_name = f"images/{request_id}{_guess_extension(mime_type)}"
     bucket = storage_client.bucket(BUCKET_NAME)
@@ -573,13 +943,184 @@ Claim: {claim_text}
         "citations_raw": citations_raw,
     }
 
-# API Key validation
+
+# --- Public API Key Management ---
+
+# Loaded during startup via load_runtime_keys(); keep fallback for safety
+TRUTHLENS_APP_KEY = os.getenv("TRUTHLENS_API_KEY") or get_secret_cached("truthlens-api-key")
+
+def generate_api_key() -> str:
+    raw = uuid.uuid4().hex + os.urandom(16).hex()
+    return hashlib.sha256(raw.encode()).hexdigest()
+
+async def save_api_key(
+    email: Optional[str] = None,
+    valid_days: int = 30,
+    rate_limit: int = 500,
+    plan: str = "free"
+) -> dict:
+    """
+    Save a new API key to the database.
+    - email: Optional email address to associate with the key.
+    - valid_days: Number of days the key is valid for (default 30).
+    - rate_limit: Requests allowed per period (default 500).
+    - plan: Optional plan name (default 'free').
+    """
+    key_id = str(uuid.uuid4())
+    api_key = generate_api_key()
+    created_at = datetime.utcnow().isoformat()
+    expires_at = (datetime.utcnow() + timedelta(days=valid_days)).isoformat()
+    row = {
+        "key_id": key_id,
+        "api_key": api_key,
+        "email": email,
+        "plan": plan,
+        "rate_limit": rate_limit,
+        "used": 0,
+        "created_at": created_at,
+        "expires_at": expires_at,
+        "active": True
+    }
+    table_fqn = f"{PROJECT_ID}.{DATASET_ID}.api_keys"
+    if bigquery_client is None:
+        raise HTTPException(status_code=503, detail="BigQuery client unavailable")
+    errors = bigquery_client.insert_rows_json(table_fqn, [row])
+    if errors:
+        logging.error(f"BigQuery insert errors (api_keys): {errors}")
+        raise HTTPException(status_code=500, detail="Failed to create API key")
+    return {
+        "api_key": api_key,
+        "rate_limit": rate_limit,
+        "expires_at": expires_at,
+        "valid_days": valid_days,
+        "plan": plan,
+        "email": email,
+    }
+
+async def validate_api_key_usage(api_key: str):
+    """Validate and enforce rate limit for a given API key (B2B/external only)."""
+    table_fqn = f"{PROJECT_ID}.{DATASET_ID}.api_keys"
+    if bigquery_client is None:
+        raise HTTPException(status_code=503, detail="BigQuery client unavailable")
+    query = f"SELECT key_id, used, rate_limit, active FROM `{table_fqn}` WHERE api_key=@api_key LIMIT 1"
+    job = bigquery_client.query(query, job_config=bigquery.QueryJobConfig(
+        query_parameters=[bigquery.ScalarQueryParameter("api_key", "STRING", api_key)]
+    ))
+    rows = list(job)
+    if not rows:
+        logging.warning("B2B key (external) invalid or not found")
+        raise HTTPException(status_code=403, detail="Invalid API key")
+    row = rows[0]
+    if not row.active:
+        logging.warning("B2B key (external) inactive")
+        raise HTTPException(status_code=403, detail="API key inactive")
+    if row.used >= row.rate_limit:
+        logging.warning("B2B key (external) rate limit exceeded")
+        raise HTTPException(status_code=429, detail="Rate limit exceeded")
+    # Increment usage
+    update_query = f"UPDATE `{table_fqn}` SET used = used + 1 WHERE key_id = @key_id"
+    bigquery_client.query(update_query, job_config=bigquery.QueryJobConfig(
+        query_parameters=[bigquery.ScalarQueryParameter("key_id", "STRING", row.key_id)]
+    ))
+
 async def verify_api_key(credentials: HTTPAuthorizationCredentials = Depends(security)):
-    """Verify API key"""
-    api_key = get_secret("truthlens-api-key")
-    if not api_key or credentials.credentials != api_key:
-        raise HTTPException(status_code=401, detail="Invalid API key")
-    return credentials.credentials
+    """
+    Verify API key.
+    - If matches internal app key, accept immediately (app key, internal).
+    - Else, validate against BigQuery (B2B/external).
+    """
+    api_key = credentials.credentials
+    if TRUTHLENS_APP_KEY and api_key == TRUTHLENS_APP_KEY:
+        logging.info("App key detected (internal) - skipping B2B validation")
+        return api_key
+    if not TRUTHLENS_APP_KEY:
+        logging.warning("No internal TRUTHLENS_APP_KEY configured; all calls require a registered B2B key.")
+    # Otherwise, B2B/external key logic
+    logging.info("B2B key detected (external) - validating via BigQuery")
+    if bigquery_client is None:
+        raise HTTPException(status_code=503, detail="BigQuery client unavailable for validation")
+    await validate_api_key_usage(api_key)
+    return api_key
+# --- URL Verification Endpoints ---
+# --- Public API Key Management Endpoints ---
+
+def send_api_key_email(email: str, api_key: str, expires_at: str, rate_limit: int):
+    """
+    Placeholder for sending API key to the provided email address.
+    Integrate with email provider here.
+    """
+    logging.info(f"Mock send API key to {email}: {api_key} (expires at {expires_at}, rate_limit={rate_limit})")
+    # TODO: Implement actual email sending.
+    return True
+
+@app.post("/v1/register_key")
+async def register_key(request: dict):
+    """
+    Generate a new public API key.
+    Request body can include: { "email": "...", "valid_days": 30, "rate_limit": 500, "plan": "free" }
+    - email: Optional. If provided, API key will be sent to the email (mock send).
+    - valid_days: Optional int, default 30.
+    - rate_limit: Optional int, default 500.
+    - plan: Optional string, default "free".
+    org_name and plan are not required.
+    """
+    email = request.get("email")
+    valid_days = int(request.get("valid_days", 30))
+    rate_limit = int(request.get("rate_limit", 500))
+    plan = request.get("plan", "free")
+
+    record = await save_api_key(
+        email=email,
+        valid_days=valid_days,
+        rate_limit=rate_limit,
+        plan=plan,
+    )
+
+    if email:
+        # Mock send the API key to the email (placeholder).
+        send_api_key_email(email, record["api_key"], record["expires_at"], record["rate_limit"])
+        return {
+            "ok": True,
+            "message": f"API key generated and sent to {email}",
+            "data": {
+                "email": email,
+                "valid_days": record["valid_days"],
+                "expires_at": record["expires_at"],
+                "rate_limit": record["rate_limit"],
+                "plan": record["plan"],
+            }
+        }
+    else:
+        # No email provided, return API key directly.
+        return {
+            "ok": True,
+            "message": "API key generated successfully",
+            "data": {
+                "api_key": record["api_key"],
+                "valid_days": record["valid_days"],
+                "expires_at": record["expires_at"],
+                "rate_limit": record["rate_limit"],
+                "plan": record["plan"],
+            }
+        }
+
+@app.get("/v1/key_usage")
+async def key_usage(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    """Get API key usage stats."""
+    api_key = credentials.credentials
+    table_fqn = f"{PROJECT_ID}.{DATASET_ID}.api_keys"
+    if bigquery_client is None:
+        raise HTTPException(status_code=503, detail="BigQuery client unavailable")
+    query = f"SELECT used, rate_limit, plan, expires_at FROM `{table_fqn}` WHERE api_key=@api_key LIMIT 1"
+    job = bigquery_client.query(query, job_config=bigquery.QueryJobConfig(
+        query_parameters=[bigquery.ScalarQueryParameter("api_key", "STRING", api_key)]
+    ))
+    rows = list(job)
+    if not rows:
+        raise HTTPException(status_code=403, detail="Invalid API key")
+    row = rows[0]
+    return {"used": row.used, "rate_limit": row.rate_limit, "plan": row.plan, "expires_at": row.expires_at}
+
 
 # Language detection
 def detect_language(text: str) -> str:
@@ -708,8 +1249,8 @@ async def check_fact_check_api(text: str, language: str = "en") -> Dict[str, Any
             "pageSize": 5
         }
 
-        # Use API key from environment (preferred for local) or Secret Manager
-        api_key = os.getenv("FACT_CHECK_API_KEY") or get_secret("fact-check-api-key")
+        # Use API key from environment (preferred for local) or Secret Manager (prefetch fallback)
+        api_key = os.getenv("FACT_CHECK_API_KEY") or FACT_CHECK_API_KEY_PREFETCH or get_secret_cached("fact-check-api-key")
         if not api_key:
             return {"citations": [], "fact_check_results": []}
 
@@ -749,6 +1290,9 @@ async def store_evidence(
     image_mime: str = "image/jpeg",
 ):
     """Store evidence in Cloud Storage"""
+    if storage_client is None:
+        logging.warning("Storage client unavailable; skipping evidence persistence")
+        return
     try:
         bucket = storage_client.bucket(BUCKET_NAME)
         
@@ -771,6 +1315,9 @@ async def store_evidence(
 async def log_request(request_id: str, text: str, mode: str, language: str,
                      verdict: str, confidence: float, latency: float, cost: float):
     """Log request to BigQuery"""
+    if bigquery_client is None:
+        logging.warning("BigQuery client unavailable; skipping request logging")
+        return
     try:
         table = bigquery_client.get_table(f"{PROJECT_ID}.{DATASET_ID}.{TABLE_ID}")
         # Redact text if privacy mode is enabled
@@ -906,6 +1453,14 @@ async def verify_claim(
             }
         )
 
+        # Attach basic media forensics (EXIF + C2PA) for images
+        try:
+            if image_data and (image_mime or "").lower().startswith("image/"):
+                forensics = await analyze_media_forensics(image_data, image_mime)
+                final_result["forensics"] = forensics
+        except Exception as e:
+            logging.error(f"forensics attach failed: {e}")
+
         # Ensure manipulation fields present
         if "manipulation_technique" not in final_result or "manipulation_explanation" not in final_result:
             try:
@@ -919,6 +1474,7 @@ Claim: {bundle.get('claim_text','')}
 """
                 model = GenerativeModel(GEMINI_MODEL)
                 loop = asyncio.get_event_loop()
+
                 def call_model():
                     try:
                         response = model.generate_content([Part.from_text(manipulation_prompt_claim)])
@@ -928,6 +1484,7 @@ Claim: {bundle.get('claim_text','')}
                     except Exception as e:
                         logging.error(f"Gemini manipulation detection (claim) failed: {e}")
                     return None
+
                 manipulation = await loop.run_in_executor(executor, call_model)
                 final_result["manipulation_technique"] = manipulation.get("manipulation_technique") if manipulation else None
                 final_result["manipulation_explanation"] = manipulation.get("explanation") if manipulation else None
@@ -941,15 +1498,30 @@ Claim: {bundle.get('claim_text','')}
 
         # Only store evidence if not in privacy mode
         await asyncio.gather(
-            store_evidence(request_id, image_data, final_result, existing_image_uri=bundle.get("image_uri"), image_mime=image_mime) if not local_privacy_mode else asyncio.sleep(0),
-            log_request(request_id, text_value, mode, language,
-                       final_result["verdict"], final_result["confidence"],
-                       latency, cost)
+            store_evidence(
+                request_id,
+                image_data,
+                final_result,
+                existing_image_uri=bundle.get("image_uri"),
+                image_mime=image_mime,
+            )
+            if not local_privacy_mode
+            else asyncio.sleep(0),
+            log_request(
+                request_id,
+                text_value,
+                mode,
+                language,
+                final_result["verdict"],
+                final_result["confidence"],
+                latency,
+                cost,
+            ),
         )
 
         final_result["metrics"] = {
             "latency_ms": latency,
-            "cost_usd": cost
+            "cost_usd": cost,
         }
         return final_result
     except Exception as e:
@@ -958,6 +1530,211 @@ Claim: {bundle.get('claim_text','')}
     finally:
         # Restore previous privacy mode to avoid leaking state between requests
         PRIVACY_MODE = prev_privacy_mode
+
+
+# --- Cost Calculation Function ---
+def calculate_cost(mode: str, text_length: int, has_image: bool) -> float:
+    """Calculate estimated cost for the request"""
+    base_cost = 0.001  # Base cost per request
+
+    # Text processing cost
+    text_cost = (text_length / 1000) * 0.0001
+
+    # Image processing cost
+    image_cost = 0.002 if has_image else 0
+
+    # Fact Check API cost (if used)
+    fact_check_cost = 0.0005 if mode == "deep" else 0
+
+    return base_cost + text_cost + image_cost + fact_check_cost
+
+# --- Unified media verification endpoint (image/video) ---
+@app.post("/v1/verify_media")
+async def verify_media(
+    text: str = Form(""),
+    mode: str = Form("fast"),
+    language: str = Form("en"),
+    file: Optional[UploadFile] = File(None),
+    privacy: bool = Form(False),
+    api_key: str = Depends(verify_api_key)
+):
+    """
+    Unified media verification (image or video).
+    - For images: runs existing verify pipeline + EXIF/C2PA report.
+    - For videos: runs lightweight probe + first-keyframe hash, then verifies any provided text.
+    """
+    start_time = datetime.utcnow()
+    request_id = str(uuid.uuid4())
+    global PRIVACY_MODE
+    local_privacy_mode = bool(privacy)
+    prev_privacy_mode = PRIVACY_MODE
+    PRIVACY_MODE = local_privacy_mode
+    try:
+        # Defaults
+        text_value = text if text is not None else ""
+        detected_lang = detect_language(text_value)
+        if language == "auto":
+            language = detected_lang
+
+        media_bytes = None
+        media_mime = None
+        if not local_privacy_mode and file:
+            media_mime = file.content_type or "application/octet-stream"
+            media_bytes = await file.read()
+
+        result_payload: Dict[str, Any] = {"request_id": request_id, "language": language, "mode": mode}
+
+        if media_bytes and (media_mime or "").lower().startswith("video/"):
+            # Video path: provide forensics; optional text verification without image context
+            forensics = await analyze_media_forensics(media_bytes, media_mime)
+            result_payload["media_forensics"] = forensics
+
+            # --- New: run Gemini multimodal verification with multiple keyframes ---
+            keyframes = []
+            try:
+                with tempfile.NamedTemporaryFile(suffix=".mp4", delete=True) as tmp:
+                    tmp.write(media_bytes)
+                    tmp.flush()
+                    keyframes = extract_keyframes_bytes(tmp.name)
+            except Exception as e:
+                logging.error(f"Failed to extract keyframes: {e}")
+
+            gemini_results = []
+            for idx, frame_bytes in enumerate(keyframes):
+                try:
+                    gemini_result = await verify_with_gemini(
+                        claim_text=text_value,
+                        language=language,
+                        evidence=[],
+                        fact_check_results=[],
+                        image_bytes=frame_bytes,
+                        image_mime="image/jpeg",
+                    )
+                    gemini_result["frame_index"] = idx
+                    gemini_results.append(gemini_result)
+                except Exception as e:
+                    logging.error(f"Gemini frame {idx} verification failed: {e}")
+
+            # Aggregate Gemini results if available
+            if gemini_results:
+                avg_confidence = sum(r.get("confidence", 0.0) for r in gemini_results) / len(gemini_results)
+                verdict_counts = {}
+                for r in gemini_results:
+                    v = r.get("verdict", "unverifiable")
+                    verdict_counts[v] = verdict_counts.get(v, 0) + 1
+                final_verdict = max(verdict_counts, key=verdict_counts.get)
+                result_payload["gemini_verification"] = {
+                    "verdict": final_verdict,
+                    "confidence": avg_confidence,
+                    "frames_analyzed": len(gemini_results),
+                    "explanations": [r.get("explanation", "") for r in gemini_results],
+                }
+                result_payload["verdict"] = final_verdict
+                result_payload["confidence"] = avg_confidence
+                result_payload["keyframe_analyzed"] = True
+
+            # If user supplied a claim, verify text-only (no image) to keep latency predictable on Cloud Run
+            if text_value.strip():
+                bundle = await process_verification_request(
+                    request_id=request_id,
+                    text=text_value,
+                    language=language,
+                    mode=mode,
+                    image_bytes=None,
+                    image_mime="image/jpeg",
+                )
+                result_payload.update(bundle["result"])
+            else:
+                result_payload.update({
+                    "verdict": "unverifiable",
+                    "confidence": 0.3,
+                    "explanation": "Video received. Provide a specific claim to verify against the video.",
+                    "key_facts": [],
+                    "citations": [],
+                    "fact_check_results": [],
+                    "timestamp": datetime.utcnow().isoformat()
+                })
+            # Metrics/log
+            latency = (datetime.utcnow() - start_time).total_seconds() * 1000
+            cost = calculate_cost(mode, len(text_value), has_image=False)
+            result_payload["metrics"] = {"latency_ms": latency, "cost_usd": cost}
+            return result_payload
+
+        # Image or no file: fall back to existing behavior (image path uses existing pipeline)
+        image_bytes = media_bytes if (media_bytes and (media_mime or "").lower().startswith("image/")) else None
+        image_mime = media_mime if image_bytes else "image/jpeg"
+
+        bundle = await process_verification_request(
+            request_id=request_id,
+            text="[REDACTED]" if local_privacy_mode else text_value,
+            language=language,
+            mode=mode,
+            image_bytes=image_bytes,
+            image_mime=image_mime,
+        )
+        final_result = bundle["result"].copy()
+        final_result.update({"request_id": request_id, "language": language, "mode": mode})
+
+        # Attach forensics for images
+        if image_bytes:
+            try:
+                final_result["forensics"] = await analyze_media_forensics(image_bytes, image_mime)
+            except Exception as e:
+                logging.error(f"forensics attach failed: {e}")
+
+        latency = (datetime.utcnow() - start_time).total_seconds() * 1000
+        cost = calculate_cost(mode, len(text_value), has_image=bool(image_bytes))
+        await asyncio.gather(
+            store_evidence(request_id, image_bytes, final_result, existing_image_uri=bundle.get("image_uri"), image_mime=image_mime) if (image_bytes and not local_privacy_mode) else asyncio.sleep(0),
+            log_request(request_id, text_value, mode, language, final_result.get("verdict","unknown"), float(final_result.get("confidence") or 0.0), latency, cost)
+        )
+        final_result["metrics"] = {"latency_ms": latency, "cost_usd": cost}
+        return final_result
+    except Exception as e:
+        logging.error(f"/v1/verify_media failed: {e}")
+        raise HTTPException(status_code=500, detail="Media verification failed")
+    finally:
+        PRIVACY_MODE = prev_privacy_mode
+
+# --- Alias endpoint for video verification ---
+@app.post("/v1/verify_video")
+async def verify_video(
+    text: str = Form(""),
+    mode: str = Form("fast"),
+    language: str = Form("en"),
+    video: Optional[UploadFile] = File(None),
+    privacy: bool = Form(False),
+    api_key: str = Depends(verify_api_key)
+):
+    # Customized to attach deepfake_detection if present
+    try:
+        result = await verify_media(
+            text=text,
+            mode=mode,
+            language=language,
+            file=video,
+            privacy=privacy,
+            api_key=api_key
+        )
+        # Attach deepfake_detection from media_forensics if available
+        if (
+            isinstance(result, dict)
+            and "media_forensics" in result
+            and isinstance(result["media_forensics"], dict)
+            and "deepfake_detection" in result["media_forensics"]
+        ):
+            result["deepfake_detection"] = result["media_forensics"]["deepfake_detection"]
+        elif (
+            isinstance(result, dict)
+            and "forensics" in result
+            and isinstance(result["forensics"], dict)
+            and "deepfake_detection" in result["forensics"]
+        ):
+            result["deepfake_detection"] = result["forensics"]["deepfake_detection"]
+        return result
+    except Exception as e:
+        logging.error(f"verify_video endpoint failed: {e}")
+        raise HTTPException(status_code=500, detail="Video verification failed")
 
 # --- URL Verification Endpoints ---
 @app.post("/v1/verify_url")
@@ -968,6 +1745,14 @@ async def verify_url_endpoint(request: dict, api_key: str = Depends(verify_api_k
     Response JSON: { "input_type": "url", "timestamp": "...", "webrisk_status": "...", "manipulation_technique": "...", ... }
     """
     url = request.get("url")
+    # Normalize URL input for flexibility (handle google.com, www.site.org, etc.)
+    if url and isinstance(url, str):
+        url = url.strip()
+        if not re.match(r"^https?://", url):
+            if not url.startswith("www."):
+                url = "https://www." + url
+            else:
+                url = "https://" + url
     if not url or not isinstance(url, str):
         raise HTTPException(status_code=400, detail="Missing or invalid 'url'")
     now = datetime.utcnow().isoformat()
@@ -981,23 +1766,35 @@ async def verify_url_endpoint(request: dict, api_key: str = Depends(verify_api_k
             cached["manipulation_technique"] = None
             cached["manipulation_explanation"] = None
         return cached
-    # Run checks
-    webrisk = await check_webrisk(url)
-    metadata = await fetch_url_metadata(url)
-    manipulation = await detect_manipulation_gemini(url, metadata)
+    # Run checks with error handling for each stage
+    try:
+        webrisk = await check_webrisk(url)
+    except Exception as e:
+        logging.error(f"WebRisk check failed: {e}")
+        webrisk = {"webrisk_status": "unknown", "error": str(e)}
+
+    try:
+        metadata = await fetch_url_metadata(url)
+    except Exception as e:
+        logging.error(f"Metadata fetch failed: {e}")
+        metadata = {}
+
+    try:
+        manipulation = await detect_manipulation_gemini(url, metadata)
+    except Exception as e:
+        logging.error(f"Manipulation detection failed: {e}")
+        manipulation = {"manipulation_technique": "unknown", "explanation": str(e)}
+
     result = {
         "input_type": "url",
         "timestamp": now,
         "url": url,
-        "webrisk_status": webrisk.get("webrisk_status"),
+        "webrisk_status": webrisk.get("webrisk_status", "unknown"),
         "webrisk_detail": webrisk,
         "metadata": metadata,
-    }
-    # Merge manipulation fields as per instructions
-    result.update({
         "manipulation_technique": manipulation.get("manipulation_technique"),
-        "manipulation_explanation": manipulation.get("explanation")
-    })
+        "manipulation_explanation": manipulation.get("explanation"),
+    }
     cache_link_verification(url, result)
     return result
 
@@ -1062,6 +1859,9 @@ def combine_results(gemini_result: Dict[str, Any], fact_check_result: Optional[D
 # Logging
 async def store_logs(request_id: str, text: str, language: str, mode: str, result: Dict[str, Any], start_time: datetime):
     """Store request logs in BigQuery"""
+    if bigquery_client is None:
+        logging.warning("BigQuery client unavailable; skipping history logging")
+        return
     try:
         table = bigquery_client.get_table(f"{PROJECT_ID}.{DATASET_ID}.{TABLE_ID}")
         
@@ -1083,20 +1883,6 @@ async def store_logs(request_id: str, text: str, language: str, mode: str, resul
     except Exception as e:
         logging.error(f"Failed to store logs: {e}")
 
-def calculate_cost(mode: str, text_length: int, has_image: bool) -> float:
-    """Calculate estimated cost for the request"""
-    base_cost = 0.001  # Base cost per request
-    
-    # Text processing cost
-    text_cost = (text_length / 1000) * 0.0001
-    
-    # Image processing cost
-    image_cost = 0.002 if has_image else 0
-    
-    # Fact Check API cost (if used)
-    fact_check_cost = 0.0005 if mode == "deep" else 0
-    
-    return base_cost + text_cost + image_cost + fact_check_cost
 
 if __name__ == "__main__":
     import uvicorn
@@ -1117,6 +1903,8 @@ async def get_history(api_key: str = Depends(verify_api_key)):
     Get last 10 verification requests from BigQuery.
     Returns: { "history": [ ... ] }
     """
+    if bigquery_client is None:
+        raise HTTPException(status_code=503, detail="BigQuery client unavailable")
     try:
         query = f"""
             SELECT request_id, timestamp, text, verdict, confidence, mode, language
@@ -1148,6 +1936,8 @@ async def get_trending(api_key: str = Depends(verify_api_key)):
     Get top 10 most frequent claims (text) from last 48 hours.
     Returns: { "trending": [ ... ] }
     """
+    if bigquery_client is None:
+        raise HTTPException(status_code=503, detail="BigQuery client unavailable")
     try:
         since = (datetime.utcnow() - timedelta(hours=48)).isoformat()
         query = f"""
@@ -1182,6 +1972,9 @@ def get_auto_table_fqn() -> str:
 
 async def save_auto_verification_row(row: Dict[str, Any]) -> None:
     """Insert one auto-verification row into BigQuery."""
+    if bigquery_client is None:
+        logging.warning("BigQuery client unavailable; skipping auto verification persistence")
+        return
     try:
         table_fqn = get_auto_table_fqn()
         # Ensure string types for large fields
@@ -1345,6 +2138,8 @@ async def auto_trending_endpoint(api_key: str = Depends(verify_api_key)):
     Return recent auto-verified items that are likely misinformation.
     Filters verdict in ('false','misleading') in the last 72 hours.
     """
+    if bigquery_client is None:
+        raise HTTPException(status_code=503, detail="BigQuery client unavailable")
     try:
         table_fqn = get_auto_table_fqn()
         since = (datetime.utcnow() - timedelta(hours=72)).isoformat()
@@ -1373,7 +2168,7 @@ async def auto_trending_endpoint(api_key: str = Depends(verify_api_key)):
         raise HTTPException(status_code=500, detail="Failed to load auto trending")
 
 
-from fastapi import Form
+
 
 @app.post("/v1/privacy_mode")
 async def set_privacy_mode(privacy: bool = Form(...)):
