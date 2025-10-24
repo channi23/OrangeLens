@@ -686,8 +686,8 @@ async def analyze_media_forensics(media_bytes: bytes, mime_type: str) -> Dict[st
 
 
 # --- Video multi-keyframe extraction for Gemini multimodal analysis ---
-def extract_keyframes_bytes(video_path: str, count: int = 3) -> List[bytes]:
-    """Extract keyframes at start, middle, and near-end positions for multi-frame Gemini analysis."""
+def extract_keyframes_bytes(video_path: str, count: int = 6) -> List[bytes]:
+    """Extract 6 frames: 2 from start, 2 from middle, 2 from end for multi-frame Gemini analysis."""
     frames = []
     if cv2 is None:
         logging.warning("OpenCV not available for multi-frame extraction")
@@ -701,9 +701,17 @@ def extract_keyframes_bytes(video_path: str, count: int = 3) -> List[bytes]:
         if total_frames == 0:
             return frames
 
-        # Sample at 0%, 50%, and 90% of the timeline (or fewer if video too short)
-        positions = [0, total_frames // 2, int(total_frames * 0.9)]
-        for pos in positions[:count]:
+        # Determine positions: 2 near start, 2 around middle, 2 near end
+        positions = [
+            int(total_frames * 0.05),
+            int(total_frames * 0.10),
+            int(total_frames * 0.45),
+            int(total_frames * 0.55),
+            int(total_frames * 0.85),
+            int(total_frames * 0.95)
+        ]
+
+        for pos in positions:
             cap.set(cv2.CAP_PROP_POS_FRAMES, pos)
             ok, frame = cap.read()
             if not ok:
@@ -1879,6 +1887,11 @@ async def verify_media(
     try:
         # Defaults
         text_value = text if text is not None else ""
+
+        # Normalize meta or non-factual video verification text
+        if text_value.strip().lower().startswith("this video"):
+            text_value = "Verify whether this video appears authentic or manipulated."
+
         detected_lang = detect_language(text_value)
         if language == "auto":
             language = detected_lang
@@ -1895,6 +1908,16 @@ async def verify_media(
             # Video path: provide forensics; optional text verification without image context
             forensics = await analyze_media_forensics(media_bytes, media_mime)
             result_payload["media_forensics"] = forensics
+                        # --- Fuse forensics into Gemini reasoning (anti-disclaimer & confidence) ---
+            forensic_summary = json.dumps(forensics.get("deepfake_detection", {}), indent=2)
+            contextual_instruction = (
+                "You are receiving six frames sampled from the start, middle, and end of a short video. "
+                "Treat them as sequential snapshots from the same clip.\n\n"
+                f"Forensic report (deepfake detector):\n{forensic_summary}\n\n"
+                "Use only the frames and this forensic report to decide if the video is authentic, manipulated, or misleading. "
+                "Do not mention limited evidence, missing frames, or uncertainty due to short duration. "
+                "Respond decisively."
+            )
 
             # --- New: run Gemini multimodal verification with multiple keyframes ---
             keyframes = []
@@ -1910,7 +1933,7 @@ async def verify_media(
             for idx, frame_bytes in enumerate(keyframes):
                 try:
                     gemini_result = await verify_with_gemini(
-                        claim_text=text_value,
+                        claim_text=f"{text_value}\n\n{contextual_instruction}",
                         language=language,
                         evidence=[],
                         fact_check_results=[],
