@@ -1,49 +1,89 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- 🌐 Internet permission for API calls -->
-    <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Network and media permissions -->
+    <uses-permission android:name="android.permission.INTERNET"/>
+    <uses-permission android:name="android.permission.CAMERA"/>
+
+    <!-- For Android 14+ (API 34+) - Selected photos access -->
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+    <uses-permission android:name="android.permission.READ_MEDIA_VISUAL_USER_SELECTED" />
+
+    <!-- For Android 13 (API 33) -->
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+
+    <!-- For older Android versions -->
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32"/>
+
+    <!-- Camera is optional (app still works without it) -->
+    <uses-feature
+        android:name="android.hardware.camera"
+        android:required="false"/>
 
     <application
         android:allowBackup="true"
+        android:icon="@drawable/pramana_logo_black"
         android:label="Pramana"
-        android:icon="@mipmap/ic_launcher"
-        android:roundIcon="@mipmap/ic_launcher_round"
+        android:roundIcon="@drawable/pramana_logo_black"
         android:supportsRtl="true"
-        android:theme="@style/Theme.MaterialComponents.DayNight.NoActionBar">
+        android:theme="@style/Theme.MaterialComponents.DayNight.NoActionBar"
+        android:networkSecurityConfig="@xml/network_security_config">
 
-        <!-- 📤 Handles shared text/images from other apps -->
+        <!-- FileProvider for camera captures -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.provider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths"/>
+        </provider>
+
+        <!-- Receive shared text/images from other apps -->
         <activity
             android:name=".ShareReceiverActivity"
             android:exported="true"
-            android:theme="@style/Theme.Transparent"> <!-- 🔹 Transparent theme -->
+            android:theme="@style/Theme.Transparent">
             <intent-filter>
-                <action android:name="android.intent.action.SEND" />
-                <category android:name="android.intent.category.DEFAULT" />
-
-                <!-- Support text + image -->
-                <data android:mimeType="text/plain" />
-                <data android:mimeType="image/*" />
+                <action android:name="android.intent.action.SEND"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <data android:mimeType="text/plain"/>
+                <data android:mimeType="image/*"/>
             </intent-filter>
         </activity>
 
-        <!-- 📋 VerifyActivity (opened manually via the app) -->
+        <!-- Process Text (selection action) -->
+        <activity
+            android:name=".ProcessTextActivity"
+            android:exported="true"
+            android:label="Verify with Pramana"
+            android:theme="@style/Theme.Transparent">
+            <intent-filter>
+                <action android:name="android.intent.action.PROCESS_TEXT"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <data android:mimeType="text/plain"/>
+            </intent-filter>
+        </activity>
+
+        <!-- Verify screen (internal navigation) -->
         <activity
             android:name=".VerifyActivity"
-            android:exported="false" />
+            android:exported="false"/>
 
-        <!-- 🕘 HistoryActivity (placeholder) -->
+        <!-- Optional history screen -->
         <activity
             android:name=".HistoryActivity"
-            android:exported="false" />
+            android:exported="false"/>
 
-        <!-- 🚀 Main launcher screen -->
+        <!-- Launcher -->
         <activity
             android:name=".MainActivity"
             android:exported="true">
             <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
 

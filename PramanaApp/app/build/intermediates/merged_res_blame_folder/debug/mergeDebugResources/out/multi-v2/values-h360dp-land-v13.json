@@ -1,10 +1,10 @@
 {
     "logs": [
         {
-            "outputFile": "com.example.truthlens.app-mergeDebugResources-58:/values-h360dp-land-v13/values-h360dp-land-v13.xml",
+            "outputFile": "com.example.truthlens.app-mergeDebugResources-66:/values-h360dp-land-v13/values-h360dp-land-v13.xml",
             "map": [
                 {
-                    "source": "/Users/apple/.gradle/caches/8.13/transforms/05549c714c735b2a5a642c15ae6c66c5/transformed/material-1.11.0/res/values-h360dp-land-v13/values-h360dp-land-v13.xml",
+                    "source": "C:\\Users\\vamsh\\.gradle\\caches\\8.13\\transforms\\05549c714c735b2a5a642c15ae6c66c5\\transformed\\material-1.11.0\\res\\values-h360dp-land-v13\\values-h360dp-land-v13.xml",
                     "from": {
                         "startLines": "2,3,4,5,6,7,8,9,10",
                         "startColumns": "4,4,4,4,4,4,4,4,4",

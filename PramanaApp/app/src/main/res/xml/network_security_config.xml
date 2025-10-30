@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!--
+        Default configuration for all network traffic.
+        By default, we only allow secure (HTTPS) connections.
+    -->
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+
+    <!--
+        ✅ FIXED: Add a specific domain configuration for your backend API.
+        This explicitly tells the system to trust and allow connections to this domain.
+    -->
+    <domain-config>
+        <domain includeSubdomains="true">truthlens-api-276376440888.us-central1.run.app</domain>
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </domain-config>
+
+    <!--
+        (Optional but Recommended) Configuration for local development.
+        This allows your app to connect to a local server on your computer via the emulator.
+    -->
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">10.0.2.2</domain> <!-- Emulator's alias for localhost -->
+        <domain includeSubdomains="true">localhost</domain>
+    </domain-config>
+
+</network-security-config>

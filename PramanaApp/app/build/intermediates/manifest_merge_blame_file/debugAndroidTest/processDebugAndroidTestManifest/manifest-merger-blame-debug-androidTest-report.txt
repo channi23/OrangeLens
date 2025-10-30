@@ -3,32 +3,32 @@
 3    package="com.example.truthlens.test" >
 4
 5    <uses-sdk
-5-->/Users/apple/Downloads/PramanaApp/app/build/intermediates/tmp/manifest/androidTest/debug/tempFile1ProcessTestManifest9672950978158179028.xml:5:5-74
+5-->C:\Users\vamsh\Desktop\hackathon\OrangeLens\PramanaApp\app\build\intermediates\tmp\manifest\androidTest\debug\tempFile1ProcessTestManifest15481030415099453246.xml:5:5-74
 6        android:minSdkVersion="24"
-6-->/Users/apple/Downloads/PramanaApp/app/build/intermediates/tmp/manifest/androidTest/debug/tempFile1ProcessTestManifest9672950978158179028.xml:5:15-41
+6-->C:\Users\vamsh\Desktop\hackathon\OrangeLens\PramanaApp\app\build\intermediates\tmp\manifest\androidTest\debug\tempFile1ProcessTestManifest15481030415099453246.xml:5:15-41
 7        android:targetSdkVersion="34" />
-7-->/Users/apple/Downloads/PramanaApp/app/build/intermediates/tmp/manifest/androidTest/debug/tempFile1ProcessTestManifest9672950978158179028.xml:5:42-71
+7-->C:\Users\vamsh\Desktop\hackathon\OrangeLens\PramanaApp\app\build\intermediates\tmp\manifest\androidTest\debug\tempFile1ProcessTestManifest15481030415099453246.xml:5:42-71
 8
 9    <instrumentation
-9-->/Users/apple/Downloads/PramanaApp/app/build/intermediates/tmp/manifest/androidTest/debug/tempFile1ProcessTestManifest9672950978158179028.xml:11:5-15:71
+9-->C:\Users\vamsh\Desktop\hackathon\OrangeLens\PramanaApp\app\build\intermediates\tmp\manifest\androidTest\debug\tempFile1ProcessTestManifest15481030415099453246.xml:11:5-15:71
 10        android:name="android.test.InstrumentationTestRunner"
-10-->/Users/apple/Downloads/PramanaApp/app/build/intermediates/tmp/manifest/androidTest/debug/tempFile1ProcessTestManifest9672950978158179028.xml:11:22-75
+10-->C:\Users\vamsh\Desktop\hackathon\OrangeLens\PramanaApp\app\build\intermediates\tmp\manifest\androidTest\debug\tempFile1ProcessTestManifest15481030415099453246.xml:11:22-75
 11        android:functionalTest="false"
-11-->/Users/apple/Downloads/PramanaApp/app/build/intermediates/tmp/manifest/androidTest/debug/tempFile1ProcessTestManifest9672950978158179028.xml:14:22-52
+11-->C:\Users\vamsh\Desktop\hackathon\OrangeLens\PramanaApp\app\build\intermediates\tmp\manifest\androidTest\debug\tempFile1ProcessTestManifest15481030415099453246.xml:14:22-52
 12        android:handleProfiling="false"
-12-->/Users/apple/Downloads/PramanaApp/app/build/intermediates/tmp/manifest/androidTest/debug/tempFile1ProcessTestManifest9672950978158179028.xml:13:22-53
+12-->C:\Users\vamsh\Desktop\hackathon\OrangeLens\PramanaApp\app\build\intermediates\tmp\manifest\androidTest\debug\tempFile1ProcessTestManifest15481030415099453246.xml:13:22-53
 13        android:label="Tests for com.example.truthlens"
-13-->/Users/apple/Downloads/PramanaApp/app/build/intermediates/tmp/manifest/androidTest/debug/tempFile1ProcessTestManifest9672950978158179028.xml:15:22-69
+13-->C:\Users\vamsh\Desktop\hackathon\OrangeLens\PramanaApp\app\build\intermediates\tmp\manifest\androidTest\debug\tempFile1ProcessTestManifest15481030415099453246.xml:15:22-69
 14        android:targetPackage="com.example.truthlens" />
-14-->/Users/apple/Downloads/PramanaApp/app/build/intermediates/tmp/manifest/androidTest/debug/tempFile1ProcessTestManifest9672950978158179028.xml:12:22-67
+14-->C:\Users\vamsh\Desktop\hackathon\OrangeLens\PramanaApp\app\build\intermediates\tmp\manifest\androidTest\debug\tempFile1ProcessTestManifest15481030415099453246.xml:12:22-67
 15
 16    <application
-16-->/Users/apple/Downloads/PramanaApp/app/build/intermediates/tmp/manifest/androidTest/debug/tempFile1ProcessTestManifest9672950978158179028.xml:7:5-9:19
+16-->C:\Users\vamsh\Desktop\hackathon\OrangeLens\PramanaApp\app\build\intermediates\tmp\manifest\androidTest\debug\tempFile1ProcessTestManifest15481030415099453246.xml:7:5-9:19
 17        android:debuggable="true"
 18        android:extractNativeLibs="false" >
 19        <uses-library android:name="android.test.runner" />
-19-->/Users/apple/Downloads/PramanaApp/app/build/intermediates/tmp/manifest/androidTest/debug/tempFile1ProcessTestManifest9672950978158179028.xml:8:9-60
-19-->/Users/apple/Downloads/PramanaApp/app/build/intermediates/tmp/manifest/androidTest/debug/tempFile1ProcessTestManifest9672950978158179028.xml:8:23-57
+19-->C:\Users\vamsh\Desktop\hackathon\OrangeLens\PramanaApp\app\build\intermediates\tmp\manifest\androidTest\debug\tempFile1ProcessTestManifest15481030415099453246.xml:8:9-60
+19-->C:\Users\vamsh\Desktop\hackathon\OrangeLens\PramanaApp\app\build\intermediates\tmp\manifest\androidTest\debug\tempFile1ProcessTestManifest15481030415099453246.xml:8:23-57
 20    </application>
 21
 22</manifest>

@@ -8,8 +8,26 @@
         android:minSdkVersion="24"
         android:targetSdkVersion="34" />
 
-    <!-- 🌐 Internet permission for API calls -->
+    <!-- Network and media permissions -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.CAMERA" />
+
+    <!-- For Android 14+ (API 34+) - Selected photos access -->
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+    <uses-permission android:name="android.permission.READ_MEDIA_VISUAL_USER_SELECTED" />
+
+    <!-- For Android 13 (API 33) -->
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+
+    <!-- For older Android versions -->
+    <uses-permission
+        android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32" />
+
+    <!-- Camera is optional (app still works without it) -->
+    <uses-feature
+        android:name="android.hardware.camera"
+        android:required="false" />
 
     <permission
         android:name="com.example.truthlens.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION"
@@ -22,40 +40,66 @@
         android:appComponentFactory="androidx.core.app.CoreComponentFactory"
         android:debuggable="true"
         android:extractNativeLibs="false"
-        android:icon="@mipmap/ic_launcher"
+        android:icon="@drawable/pramana_logo_black"
         android:label="Pramana"
-        android:roundIcon="@mipmap/ic_launcher_round"
+        android:networkSecurityConfig="@xml/network_security_config"
+        android:roundIcon="@drawable/pramana_logo_black"
         android:supportsRtl="true"
         android:testOnly="true"
         android:theme="@style/Theme.MaterialComponents.DayNight.NoActionBar" >
 
-        <!-- 📤 Handles shared text/images from other apps -->
+        <!-- FileProvider for camera captures -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="com.example.truthlens.provider"
+            android:exported="false"
+            android:grantUriPermissions="true" >
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+
+        <!-- Receive shared text/images from other apps -->
         <activity
             android:name="com.example.truthlens.ShareReceiverActivity"
             android:exported="true"
-            android:theme="@style/Theme.Transparent" > <!-- 🔹 Transparent theme -->
+            android:theme="@style/Theme.Transparent" >
             <intent-filter>
                 <action android:name="android.intent.action.SEND" />
 
                 <category android:name="android.intent.category.DEFAULT" />
 
-                <!-- Support text + image -->
                 <data android:mimeType="text/plain" />
                 <data android:mimeType="image/*" />
             </intent-filter>
         </activity>
 
-        <!-- 📋 VerifyActivity (opened manually via the app) -->
+        <!-- Process Text (selection action) -->
+        <activity
+            android:name="com.example.truthlens.ProcessTextActivity"
+            android:exported="true"
+            android:label="Verify with Pramana"
+            android:theme="@style/Theme.Transparent" >
+            <intent-filter>
+                <action android:name="android.intent.action.PROCESS_TEXT" />
+
+                <category android:name="android.intent.category.DEFAULT" />
+
+                <data android:mimeType="text/plain" />
+            </intent-filter>
+        </activity>
+
+        <!-- Verify screen (internal navigation) -->
         <activity
             android:name="com.example.truthlens.VerifyActivity"
             android:exported="false" />
 
-        <!-- 🕘 HistoryActivity (placeholder) -->
+        <!-- Optional history screen -->
         <activity
             android:name="com.example.truthlens.HistoryActivity"
             android:exported="false" />
 
-        <!-- 🚀 Main launcher screen -->
+        <!-- Launcher -->
         <activity
             android:name="com.example.truthlens.MainActivity"
             android:exported="true" >
@@ -83,6 +127,10 @@
                 android:name="androidx.profileinstaller.ProfileInstallerInitializer"
                 android:value="androidx.startup" />
         </provider>
+
+        <activity
+            android:name="androidx.activity.ComponentActivity"
+            android:exported="true" />
 
         <receiver
             android:name="androidx.profileinstaller.ProfileInstallReceiver"

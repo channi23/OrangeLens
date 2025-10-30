@@ -16,6 +16,7 @@ drawable pill_misleading
 drawable pill_neutral
 drawable pill_true
 drawable pill_unknown
+drawable pramana_logo_black
 drawable rounded_bg_light
 id closeButton
 id confidenceBar
@@ -52,3 +53,5 @@ style Theme.Pramana
 style Theme.Transparent
 style TransparentBottomSheet
 style TransparentBottomSheetDialog
+xml file_paths
+xml network_security_config

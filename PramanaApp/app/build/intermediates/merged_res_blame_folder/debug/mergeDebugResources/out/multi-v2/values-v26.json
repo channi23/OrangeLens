@@ -1,10 +1,10 @@
 {
     "logs": [
         {
-            "outputFile": "com.example.truthlens.app-mergeDebugResources-58:/values-v26/values-v26.xml",
+            "outputFile": "com.example.truthlens.app-mergeDebugResources-66:/values-v26/values-v26.xml",
             "map": [
                 {
-                    "source": "/Users/apple/.gradle/caches/8.13/transforms/6954c5679726d72a953f6b23cb7e3cc9/transformed/appcompat-1.6.1/res/values-v26/values-v26.xml",
+                    "source": "C:\\Users\\vamsh\\.gradle\\caches\\8.13\\transforms\\6954c5679726d72a953f6b23cb7e3cc9\\transformed\\appcompat-1.6.1\\res\\values-v26\\values-v26.xml",
                     "from": {
                         "startLines": "2,3,4,8,12,16",
                         "startColumns": "4,4,4,4,4,4",

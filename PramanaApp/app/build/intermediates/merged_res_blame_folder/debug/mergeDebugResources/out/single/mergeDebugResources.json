@@ -1,134 +1,142 @@
 [
     {
-        "merged": "/Users/apple/.gradle/daemon/8.13/com.example.truthlens.app-debug-60:/mipmap-mdpi_ic_launcher.webp.flat",
-        "source": "/Users/apple/.gradle/daemon/8.13/com.example.truthlens.app-main-62:/mipmap-mdpi/ic_launcher.webp"
+        "merged": "com.example.truthlens.app-debug-68:/mipmap-xxhdpi_ic_launcher.webp.flat",
+        "source": "com.example.truthlens.app-main-70:/mipmap-xxhdpi/ic_launcher.webp"
     },
     {
-        "merged": "/Users/apple/.gradle/daemon/8.13/com.example.truthlens.app-debug-60:/drawable_pill_unknown.xml.flat",
-        "source": "/Users/apple/.gradle/daemon/8.13/com.example.truthlens.app-main-62:/drawable/pill_unknown.xml"
+        "merged": "com.example.truthlens.app-debug-68:/xml_network_security_config.xml.flat",
+        "source": "com.example.truthlens.app-main-70:/xml/network_security_config.xml"
     },
     {
-        "merged": "/Users/apple/.gradle/daemon/8.13/com.example.truthlens.app-debug-60:/layout_activity_verify.xml.flat",
-        "source": "/Users/apple/.gradle/daemon/8.13/com.example.truthlens.app-main-62:/layout/activity_verify.xml"
+        "merged": "com.example.truthlens.app-debug-68:/anim_slide_up.xml.flat",
+        "source": "com.example.truthlens.app-main-70:/anim/slide_up.xml"
     },
     {
-        "merged": "/Users/apple/.gradle/daemon/8.13/com.example.truthlens.app-debug-60:/anim_fade_in.xml.flat",
-        "source": "/Users/apple/.gradle/daemon/8.13/com.example.truthlens.app-main-62:/anim/fade_in.xml"
+        "merged": "com.example.truthlens.app-debug-68:/mipmap-anydpi-v26_ic_launcher.xml.flat",
+        "source": "com.example.truthlens.app-main-70:/mipmap-anydpi-v26/ic_launcher.xml"
     },
     {
-        "merged": "/Users/apple/.gradle/daemon/8.13/com.example.truthlens.app-debug-60:/mipmap-xxxhdpi_ic_launcher_foreground.webp.flat",
-        "source": "/Users/apple/.gradle/daemon/8.13/com.example.truthlens.app-main-62:/mipmap-xxxhdpi/ic_launcher_foreground.webp"
+        "merged": "com.example.truthlens.app-debug-68:/mipmap-xhdpi_ic_launcher_foreground.webp.flat",
+        "source": "com.example.truthlens.app-main-70:/mipmap-xhdpi/ic_launcher_foreground.webp"
     },
     {
-        "merged": "/Users/apple/.gradle/daemon/8.13/com.example.truthlens.app-debug-60:/raw_loader.json.flat",
-        "source": "/Users/apple/.gradle/daemon/8.13/com.example.truthlens.app-main-62:/raw/loader.json"
+        "merged": "com.example.truthlens.app-debug-68:/mipmap-hdpi_ic_launcher_foreground.webp.flat",
+        "source": "com.example.truthlens.app-main-70:/mipmap-hdpi/ic_launcher_foreground.webp"
     },
     {
-        "merged": "/Users/apple/.gradle/daemon/8.13/com.example.truthlens.app-debug-60:/drawable_glass_card_bg.xml.flat",
-        "source": "/Users/apple/.gradle/daemon/8.13/com.example.truthlens.app-main-62:/drawable/glass_card_bg.xml"
+        "merged": "com.example.truthlens.app-debug-68:/mipmap-xxxhdpi_ic_launcher_round.webp.flat",
+        "source": "com.example.truthlens.app-main-70:/mipmap-xxxhdpi/ic_launcher_round.webp"
     },
     {
-        "merged": "/Users/apple/.gradle/daemon/8.13/com.example.truthlens.app-debug-60:/drawable_pill_neutral.xml.flat",
-        "source": "/Users/apple/.gradle/daemon/8.13/com.example.truthlens.app-main-62:/drawable/pill_neutral.xml"
+        "merged": "com.example.truthlens.app-debug-68:/drawable_pill_true.xml.flat",
+        "source": "com.example.truthlens.app-main-70:/drawable/pill_true.xml"
     },
     {
-        "merged": "/Users/apple/.gradle/daemon/8.13/com.example.truthlens.app-debug-60:/mipmap-xhdpi_ic_launcher.webp.flat",
-        "source": "/Users/apple/.gradle/daemon/8.13/com.example.truthlens.app-main-62:/mipmap-xhdpi/ic_launcher.webp"
+        "merged": "com.example.truthlens.app-debug-68:/layout_dialog_verify_result.xml.flat",
+        "source": "com.example.truthlens.app-main-70:/layout/dialog_verify_result.xml"
     },
     {
-        "merged": "/Users/apple/.gradle/daemon/8.13/com.example.truthlens.app-debug-60:/mipmap-xxhdpi_ic_launcher.webp.flat",
-        "source": "/Users/apple/.gradle/daemon/8.13/com.example.truthlens.app-main-62:/mipmap-xxhdpi/ic_launcher.webp"
+        "merged": "com.example.truthlens.app-debug-68:/mipmap-mdpi_ic_launcher_foreground.webp.flat",
+        "source": "com.example.truthlens.app-main-70:/mipmap-mdpi/ic_launcher_foreground.webp"
     },
     {
-        "merged": "/Users/apple/.gradle/daemon/8.13/com.example.truthlens.app-debug-60:/mipmap-xxxhdpi_ic_launcher.webp.flat",
-        "source": "/Users/apple/.gradle/daemon/8.13/com.example.truthlens.app-main-62:/mipmap-xxxhdpi/ic_launcher.webp"
+        "merged": "com.example.truthlens.app-debug-68:/drawable_pill_unknown.xml.flat",
+        "source": "com.example.truthlens.app-main-70:/drawable/pill_unknown.xml"
     },
     {
-        "merged": "/Users/apple/.gradle/daemon/8.13/com.example.truthlens.app-debug-60:/layout_activity_share_receiver.xml.flat",
-        "source": "/Users/apple/.gradle/daemon/8.13/com.example.truthlens.app-main-62:/layout/activity_share_receiver.xml"
+        "merged": "com.example.truthlens.app-debug-68:/mipmap-xxhdpi_ic_launcher_round.webp.flat",
+        "source": "com.example.truthlens.app-main-70:/mipmap-xxhdpi/ic_launcher_round.webp"
     },
     {
-        "merged": "/Users/apple/.gradle/daemon/8.13/com.example.truthlens.app-debug-60:/raw_siri_glow_border.json.flat",
-        "source": "/Users/apple/.gradle/daemon/8.13/com.example.truthlens.app-main-62:/raw/siri_glow_border.json"
+        "merged": "com.example.truthlens.app-debug-68:/raw_siri_glow_border.json.flat",
+        "source": "com.example.truthlens.app-main-70:/raw/siri_glow_border.json"
     },
     {
-        "merged": "/Users/apple/.gradle/daemon/8.13/com.example.truthlens.app-debug-60:/mipmap-xhdpi_ic_launcher_round.webp.flat",
-        "source": "/Users/apple/.gradle/daemon/8.13/com.example.truthlens.app-main-62:/mipmap-xhdpi/ic_launcher_round.webp"
+        "merged": "com.example.truthlens.app-debug-68:/drawable_pill_misleading.xml.flat",
+        "source": "com.example.truthlens.app-main-70:/drawable/pill_misleading.xml"
     },
     {
-        "merged": "/Users/apple/.gradle/daemon/8.13/com.example.truthlens.app-debug-60:/mipmap-anydpi-v26_ic_launcher_round.xml.flat",
-        "source": "/Users/apple/.gradle/daemon/8.13/com.example.truthlens.app-main-62:/mipmap-anydpi-v26/ic_launcher_round.xml"
+        "merged": "com.example.truthlens.app-debug-68:/mipmap-xxxhdpi_ic_launcher.webp.flat",
+        "source": "com.example.truthlens.app-main-70:/mipmap-xxxhdpi/ic_launcher.webp"
     },
     {
-        "merged": "/Users/apple/.gradle/daemon/8.13/com.example.truthlens.app-debug-60:/drawable_pill_false.xml.flat",
-        "source": "/Users/apple/.gradle/daemon/8.13/com.example.truthlens.app-main-62:/drawable/pill_false.xml"
+        "merged": "com.example.truthlens.app-debug-68:/drawable_pill_false.xml.flat",
+        "source": "com.example.truthlens.app-main-70:/drawable/pill_false.xml"
     },
     {
-        "merged": "/Users/apple/.gradle/daemon/8.13/com.example.truthlens.app-debug-60:/mipmap-hdpi_ic_launcher_round.webp.flat",
-        "source": "/Users/apple/.gradle/daemon/8.13/com.example.truthlens.app-main-62:/mipmap-hdpi/ic_launcher_round.webp"
+        "merged": "com.example.truthlens.app-debug-68:/drawable_pramana_logo_black.xml.flat",
+        "source": "com.example.truthlens.app-main-70:/drawable/pramana_logo_black.xml"
     },
     {
-        "merged": "com.example.truthlens.app-debug-60:/raw_siri_glow_border.json.flat",
-        "source": "com.example.truthlens.app-main-62:/raw/siri_glow_border.json"
+        "merged": "com.example.truthlens.app-debug-68:/xml_file_paths.xml.flat",
+        "source": "com.example.truthlens.app-main-70:/xml/file_paths.xml"
     },
     {
-        "merged": "/Users/apple/.gradle/daemon/8.13/com.example.truthlens.app-debug-60:/layout_dialog_verify_result.xml.flat",
-        "source": "/Users/apple/.gradle/daemon/8.13/com.example.truthlens.app-main-62:/layout/dialog_verify_result.xml"
+        "merged": "com.example.truthlens.app-debug-68:/mipmap-mdpi_ic_launcher_round.webp.flat",
+        "source": "com.example.truthlens.app-main-70:/mipmap-mdpi/ic_launcher_round.webp"
     },
     {
-        "merged": "/Users/apple/.gradle/daemon/8.13/com.example.truthlens.app-debug-60:/drawable_pill_true.xml.flat",
-        "source": "/Users/apple/.gradle/daemon/8.13/com.example.truthlens.app-main-62:/drawable/pill_true.xml"
+        "merged": "com.example.truthlens.app-debug-68:/mipmap-mdpi_ic_launcher.webp.flat",
+        "source": "com.example.truthlens.app-main-70:/mipmap-mdpi/ic_launcher.webp"
     },
     {
-        "merged": "/Users/apple/.gradle/daemon/8.13/com.example.truthlens.app-debug-60:/mipmap-xxhdpi_ic_launcher_foreground.webp.flat",
-        "source": "/Users/apple/.gradle/daemon/8.13/com.example.truthlens.app-main-62:/mipmap-xxhdpi/ic_launcher_foreground.webp"
+        "merged": "com.example.truthlens.app-debug-68:/layout_activity_share_receiver.xml.flat",
+        "source": "com.example.truthlens.app-main-70:/layout/activity_share_receiver.xml"
     },
     {
-        "merged": "/Users/apple/.gradle/daemon/8.13/com.example.truthlens.app-debug-60:/drawable_pill_misleading.xml.flat",
-        "source": "/Users/apple/.gradle/daemon/8.13/com.example.truthlens.app-main-62:/drawable/pill_misleading.xml"
+        "merged": "com.example.truthlens.app-debug-68:/mipmap-xhdpi_ic_launcher.webp.flat",
+        "source": "com.example.truthlens.app-main-70:/mipmap-xhdpi/ic_launcher.webp"
     },
     {
-        "merged": "/Users/apple/.gradle/daemon/8.13/com.example.truthlens.app-debug-60:/anim_slide_down.xml.flat",
-        "source": "/Users/apple/.gradle/daemon/8.13/com.example.truthlens.app-main-62:/anim/slide_down.xml"
+        "merged": "com.example.truthlens.app-debug-68:/anim_fade_in.xml.flat",
+        "source": "com.example.truthlens.app-main-70:/anim/fade_in.xml"
     },
     {
-        "merged": "/Users/apple/.gradle/daemon/8.13/com.example.truthlens.app-debug-60:/mipmap-xhdpi_ic_launcher_foreground.webp.flat",
-        "source": "/Users/apple/.gradle/daemon/8.13/com.example.truthlens.app-main-62:/mipmap-xhdpi/ic_launcher_foreground.webp"
+        "merged": "com.example.truthlens.app-debug-68:/drawable_glass_card_bg.xml.flat",
+        "source": "com.example.truthlens.app-main-70:/drawable/glass_card_bg.xml"
     },
     {
-        "merged": "/Users/apple/.gradle/daemon/8.13/com.example.truthlens.app-debug-60:/mipmap-hdpi_ic_launcher.webp.flat",
-        "source": "/Users/apple/.gradle/daemon/8.13/com.example.truthlens.app-main-62:/mipmap-hdpi/ic_launcher.webp"
+        "merged": "com.example.truthlens.app-debug-68:/drawable_pill_neutral.xml.flat",
+        "source": "com.example.truthlens.app-main-70:/drawable/pill_neutral.xml"
     },
     {
-        "merged": "/Users/apple/.gradle/daemon/8.13/com.example.truthlens.app-debug-60:/anim_slide_up.xml.flat",
-        "source": "/Users/apple/.gradle/daemon/8.13/com.example.truthlens.app-main-62:/anim/slide_up.xml"
+        "merged": "com.example.truthlens.app-debug-68:/mipmap-xxhdpi_ic_launcher_foreground.webp.flat",
+        "source": "com.example.truthlens.app-main-70:/mipmap-xxhdpi/ic_launcher_foreground.webp"
     },
     {
-        "merged": "/Users/apple/.gradle/daemon/8.13/com.example.truthlens.app-debug-60:/mipmap-mdpi_ic_launcher_foreground.webp.flat",
-        "source": "/Users/apple/.gradle/daemon/8.13/com.example.truthlens.app-main-62:/mipmap-mdpi/ic_launcher_foreground.webp"
+        "merged": "com.example.truthlens.app-debug-68:/mipmap-hdpi_ic_launcher_round.webp.flat",
+        "source": "com.example.truthlens.app-main-70:/mipmap-hdpi/ic_launcher_round.webp"
     },
     {
-        "merged": "/Users/apple/.gradle/daemon/8.13/com.example.truthlens.app-debug-60:/mipmap-hdpi_ic_launcher_foreground.webp.flat",
-        "source": "/Users/apple/.gradle/daemon/8.13/com.example.truthlens.app-main-62:/mipmap-hdpi/ic_launcher_foreground.webp"
+        "merged": "com.example.truthlens.app-debug-68:/anim_slide_down.xml.flat",
+        "source": "com.example.truthlens.app-main-70:/anim/slide_down.xml"
     },
     {
-        "merged": "/Users/apple/.gradle/daemon/8.13/com.example.truthlens.app-debug-60:/mipmap-xxxhdpi_ic_launcher_round.webp.flat",
-        "source": "/Users/apple/.gradle/daemon/8.13/com.example.truthlens.app-main-62:/mipmap-xxxhdpi/ic_launcher_round.webp"
+        "merged": "com.example.truthlens.app-debug-68:/mipmap-xxxhdpi_ic_launcher_foreground.webp.flat",
+        "source": "com.example.truthlens.app-main-70:/mipmap-xxxhdpi/ic_launcher_foreground.webp"
     },
     {
-        "merged": "/Users/apple/.gradle/daemon/8.13/com.example.truthlens.app-debug-60:/drawable_rounded_bg_light.xml.flat",
-        "source": "/Users/apple/.gradle/daemon/8.13/com.example.truthlens.app-main-62:/drawable/rounded_bg_light.xml"
+        "merged": "com.example.truthlens.app-debug-68:/drawable_rounded_bg_light.xml.flat",
+        "source": "com.example.truthlens.app-main-70:/drawable/rounded_bg_light.xml"
     },
     {
-        "merged": "/Users/apple/.gradle/daemon/8.13/com.example.truthlens.app-debug-60:/mipmap-mdpi_ic_launcher_round.webp.flat",
-        "source": "/Users/apple/.gradle/daemon/8.13/com.example.truthlens.app-main-62:/mipmap-mdpi/ic_launcher_round.webp"
+        "merged": "com.example.truthlens.app-debug-68:/mipmap-anydpi-v26_ic_launcher_round.xml.flat",
+        "source": "com.example.truthlens.app-main-70:/mipmap-anydpi-v26/ic_launcher_round.xml"
     },
     {
-        "merged": "/Users/apple/.gradle/daemon/8.13/com.example.truthlens.app-debug-60:/mipmap-anydpi-v26_ic_launcher.xml.flat",
-        "source": "/Users/apple/.gradle/daemon/8.13/com.example.truthlens.app-main-62:/mipmap-anydpi-v26/ic_launcher.xml"
+        "merged": "com.example.truthlens.app-debug-68:/mipmap-xhdpi_ic_launcher_round.webp.flat",
+        "source": "com.example.truthlens.app-main-70:/mipmap-xhdpi/ic_launcher_round.webp"
     },
     {
-        "merged": "/Users/apple/.gradle/daemon/8.13/com.example.truthlens.app-debug-60:/mipmap-xxhdpi_ic_launcher_round.webp.flat",
-        "source": "/Users/apple/.gradle/daemon/8.13/com.example.truthlens.app-main-62:/mipmap-xxhdpi/ic_launcher_round.webp"
+        "merged": "com.example.truthlens.app-debug-68:/layout_activity_verify.xml.flat",
+        "source": "com.example.truthlens.app-main-70:/layout/activity_verify.xml"
+    },
+    {
+        "merged": "com.example.truthlens.app-debug-68:/mipmap-hdpi_ic_launcher.webp.flat",
+        "source": "com.example.truthlens.app-main-70:/mipmap-hdpi/ic_launcher.webp"
+    },
+    {
+        "merged": "com.example.truthlens.app-debug-68:/raw_loader.json.flat",
+        "source": "com.example.truthlens.app-main-70:/raw/loader.json"
     }
 ]
