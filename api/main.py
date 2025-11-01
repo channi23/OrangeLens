@@ -194,7 +194,7 @@ def load_runtime_keys() -> Dict[str, str]:
     if GEMINI_API_KEY:
         logging.info("GEMINI_API_KEY loaded securely (source: %s)", sources["GEMINI_API_KEY"])
 
-    logging.info("🔐 Runtime key sources: " + json.dumps(sources))
+    logging.info("🔐 Runtime key sources: " + json.dumps(sources, ensure_ascii=False))
     return sources
 
 # Load keys on startup
@@ -321,9 +321,9 @@ def cache_verification(cache_key: str, data: dict, text: str):
             "verdict": data.get("verdict", "unknown"),
             "confidence": float(data.get("confidence", 0.0)),
             "explanation": data.get("explanation", "")[:2000],
-            "citations": json.dumps(data.get("citations", [])),
+            "citations": json.dumps(data.get("citations", []), ensure_ascii=False),
             "timestamp": datetime.utcnow().isoformat(),
-            "data": json.dumps(data)
+            "data": json.dumps(data, ensure_ascii=False)
         }
         errors = bigquery_client.insert_rows_json(table_name, [row])
         if errors:
@@ -348,7 +348,7 @@ def cache_link_verification(url: str, data: dict):
         row = {
             "url_hash": get_url_hash(url),
             "url": url,
-            "data": json.dumps(data),
+            "data": json.dumps(data, ensure_ascii=False),
             "timestamp": datetime.utcnow().isoformat()
         }
         errors = bigquery_client.insert_rows_json(table_name, [row])
@@ -432,12 +432,12 @@ def manipulation_prompt(url: str, metadata: dict) -> str:
 URL: {url}
 Title: {metadata.get('title','')}
 Meta description: {metadata.get('meta_description','')}
-Headers: {json.dumps(metadata.get('headers',{}))}
+Headers: {json.dumps(metadata.get('headers',{}), ensure_ascii=False)}
 """
 
 async def detect_manipulation_gemini(url: str, metadata: dict) -> dict:
     """Call Gemini to detect manipulation technique for a URL."""
-    model = GenerativeModel(GEMINI_MODEL)
+    model = get_gemini_model()
     prompt = manipulation_prompt(url, metadata)
     loop = asyncio.get_event_loop()
     # Run blocking Gemini call in executor
@@ -599,7 +599,7 @@ async def analyze_media_forensics(media_bytes: bytes, mime_type: str) -> Dict[st
                                 result["keyframe_sha256"] = _sha256_hex(b)
                     except Exception as e:
                         logging.error(f"Keyframe extraction failed: {e}")
-                # --- DeepFake detection: basic frame variance analysis ---
+                # --- DeepFake detection: adaptive frame variance analysis ---
                 deepfake_detection = {
                     "status": "not_run",
                     "suspicious_frames": [],
@@ -618,15 +618,24 @@ async def analyze_media_forensics(media_bytes: bytes, mime_type: str) -> Dict[st
                     try:
                         cap = cv2.VideoCapture(tmp.name)
                         frame_count = int(probe.get("frame_count") or 0)
+                        duration = float(probe.get("duration_sec") or 0.0)
                         suspicious_frames = []
                         prev_gray = None
-                        frame_idxs = []
-                        # Only check up to 30 frames, evenly spaced
-                        max_frames = min(30, frame_count)
+                        # --- Adaptive frame sampling logic ---
+                        if duration <= 5:
+                            max_frames = int(duration)
+                        elif duration <= 10:
+                            max_frames = 5
+                        elif duration <= 30:
+                            max_frames = 8
+                        else:
+                            max_frames = 10
+                        max_frames = max(1, min(max_frames, frame_count))
                         if max_frames > 1:
                             step = max(1, frame_count // max_frames)
                         else:
                             step = 1
+                        logging.info(f"Adaptive sampling: {max_frames} frames over {duration:.2f}s")
                         idx = 0
                         checked = 0
                         variances = []
@@ -687,7 +696,10 @@ async def analyze_media_forensics(media_bytes: bytes, mime_type: str) -> Dict[st
 
 # --- Video multi-keyframe extraction for Gemini multimodal analysis ---
 def extract_keyframes_bytes(video_path: str, count: int = 6) -> List[bytes]:
-    """Extract 6 frames: 2 from start, 2 from middle, 2 from end for multi-frame Gemini analysis."""
+    """
+    Extract keyframes adaptively for Gemini analysis.
+    Uses adaptive frame sampling: more frames for longer videos.
+    """
     frames = []
     if cv2 is None:
         logging.warning("OpenCV not available for multi-frame extraction")
@@ -698,27 +710,38 @@ def extract_keyframes_bytes(video_path: str, count: int = 6) -> List[bytes]:
             logging.warning("Failed to open video for keyframe extraction")
             return frames
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+        fps = cap.get(cv2.CAP_PROP_FPS) or 0.0
+        duration = total_frames / fps if fps else 0.0
         if total_frames == 0:
             return frames
-
-        # Determine positions: 2 near start, 2 around middle, 2 near end
-        positions = [
-            int(total_frames * 0.05),
-            int(total_frames * 0.10),
-            int(total_frames * 0.45),
-            int(total_frames * 0.55),
-            int(total_frames * 0.85),
-            int(total_frames * 0.95)
-        ]
-
-        for pos in positions:
-            cap.set(cv2.CAP_PROP_POS_FRAMES, pos)
+        # --- Adaptive frame sampling logic ---
+        if duration <= 5:
+            max_frames = int(duration)
+        elif duration <= 10:
+            max_frames = 5
+        elif duration <= 30:
+            max_frames = 8
+        else:
+            max_frames = 10
+        max_frames = max(1, min(max_frames, total_frames))
+        if max_frames > 1:
+            step = max(1, total_frames // max_frames)
+        else:
+            step = 1
+        logging.info(f"Adaptive sampling for Gemini: {max_frames} frames over {duration:.2f}s")
+        idx = 0
+        checked = 0
+        while idx < total_frames and checked < max_frames:
+            cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
             ok, frame = cap.read()
             if not ok:
+                idx += step
                 continue
             ok2, jpg = cv2.imencode(".jpg", frame)
             if ok2:
                 frames.append(jpg.tobytes())
+            checked += 1
+            idx += step
         cap.release()
         return frames
     except Exception as e:
@@ -741,7 +764,7 @@ def extract_text_from_image_bytes(image_bytes: bytes) -> str:
 async def refine_text_with_gemini(raw_text: str, language: str) -> str:
     """Use Gemini to clean/refine OCR text into a concise claim."""
     try:
-        model = GenerativeModel(GEMINI_MODEL)
+        model = get_gemini_model()
         prompt = f"Clean and refine the following OCR text into a single clear factual claim for fact-checking. If not possible, return it unchanged.\n\nText: {raw_text}"
         response = model.generate_content([Part.from_text(prompt)])
         return (response.text or raw_text).strip()
@@ -772,7 +795,7 @@ async def upload_image_to_bucket(image_bytes: bytes, mime_type: str, request_id:
 
 
 async def generate_image_caption(image_bytes: bytes, language: str, image_mime: str = "image/jpeg") -> str:
-    model = GenerativeModel(GEMINI_MODEL)
+    model = get_gemini_model()
     caption_prompt = {
         "en": "Describe the image in one neutral sentence so it can be fact checked.",
         "hi": "तथ्य जांच के लिए छवि का एक निष्पक्ष वाक्य में वर्णन करें।",
@@ -795,52 +818,57 @@ async def generate_image_caption(image_bytes: bytes, language: str, image_mime: 
 
 
 async def search_news_fallback(query: str, language: str) -> List[Dict[str, Any]]:
-    if not SERPER_API_KEY or not query:
+    """Enhanced Serper News fallback — ensures proper news citations."""
+    if not SERPER_API_KEY:
+        logging.warning("SERPER_API_KEY not set — skipping news search.")
         return []
-    headers = {"X-API-KEY": SERPER_API_KEY, "Content-Type": "application/json"}
-    payload = {"q": query, "num": 5, "hl": language or "en"}
-    try:
-        resp = requests.post(SERPER_API_ENDPOINT, headers=headers, json=payload, timeout=15)
-        resp.raise_for_status()
-        data = resp.json()
-    except Exception as exc:
-        logging.error(f"News search failed: {exc}")
+    if not query or len(query.strip()) < 3:
+        logging.warning("Empty or too-short query for Serper fallback.")
         return []
 
-    entries: List[Dict[str, Any]] = []
-    for item in data.get("news", [])[:5]:
-        entries.append({
-            "title": item.get("title", ""),
-            "snippet": item.get("snippet", item.get("description", "")),
-            "url": item.get("link") or item.get("sourceUrl", ""),
-            "source": item.get("source", ""),
-        })
-    return entries
+    headers = {"X-API-KEY": SERPER_API_KEY, "Content-Type": "application/json"}
+    payload = {"q": query.strip(), "num": 5, "hl": language or "en"}
+
+    try:
+        resp = requests.post(SERPER_API_ENDPOINT, headers=headers, json=payload, timeout=20)
+        logging.info(f"Serper request: {SERPER_API_ENDPOINT}, payload={payload}")
+        resp.raise_for_status()
+        data = resp.json()
+
+        entries = []
+        for item in data.get("news", [])[:5]:
+            entries.append({
+                "title": item.get("title", "Untitled"),
+                "snippet": item.get("snippet") or item.get("description", ""),
+                "url": item.get("link") or item.get("sourceUrl", ""),
+                "source": item.get("source", "Unknown"),
+            })
+
+        if not entries:
+            logging.warning("Serper returned no news results.")
+        else:
+            logging.info(f"Serper returned {len(entries)} news entries.")
+
+        return entries
+
+    except Exception as exc:
+        logging.error(f"Serper news fallback failed: {exc}")
+        return []
 
 
 async def retrieve_supporting_evidence(claim_text: str, language: str) -> Dict[str, Any]:
+    """Gather fact-check citations and fallback news evidence."""
     fact_data = await check_fact_check_api(claim_text, language)
-    citations = fact_data.get("citations", [])
-    fact_check_results = fact_data.get("fact_check_results", [])
+    citations = fact_data.get("citations", []) or []
+    fact_check_results = fact_data.get("fact_check_results", []) or []
 
-    evidence_entries: List[Dict[str, Any]] = []
-    for item in citations[:5]:
-        evidence_entries.append({
-            "title": item.get("title", ""),
-            "snippet": item.get("rating", ""),
-            "url": item.get("url", ""),
-            "source": item.get("publisher", ""),
-        })
-
-    if not evidence_entries:
-        fallback_entries = await search_news_fallback(claim_text, language)
-        evidence_entries.extend(fallback_entries)
-    else:
-        fallback_entries = []
+    # Fallback to Serper if no citations from Fact Check API
+    if not citations:
+        logging.info("No Fact Check results found — using Serper news fallback.")
+        citations = await search_news_fallback(claim_text, language)
 
     return {
-        "evidence": evidence_entries,
-        "citations": citations or fallback_entries,
+        "citations": citations,
         "fact_check_results": fact_check_results,
     }
 
@@ -853,6 +881,8 @@ async def process_verification_request(
     image_bytes: Optional[bytes],
     image_mime: str,
 ) -> Dict[str, Any]:
+    if not (text or image_bytes):
+        raise HTTPException(status_code=400, detail="Either text or image must be provided for verification.")
     language = language or "en"
     if language == "auto":
         language = detect_language(text)
@@ -898,9 +928,17 @@ async def process_verification_request(
         raise HTTPException(status_code=400, detail="Unable to determine claim text from request")
 
     evidence_bundle = await retrieve_supporting_evidence(claim_text, language)
-    evidence_entries = evidence_bundle.get("evidence", [])
     citations_raw = evidence_bundle.get("citations", [])
     fact_check_raw = evidence_bundle.get("fact_check_results", [])
+
+    evidence_entries: List[Dict[str, Any]] = []
+    for item in citations_raw[:5]:
+        evidence_entries.append({
+            "title": item.get("title", ""),
+            "snippet": item.get("snippet") or item.get("rating", ""),
+            "url": item.get("url", ""),
+            "source": item.get("source") or item.get("publisher", ""),
+        })
 
     citation_candidates: List[Dict[str, Any]] = []
     for item in evidence_entries:
@@ -935,6 +973,38 @@ async def process_verification_request(
         image_mime=image_mime,
     )
 
+    # --- Enrich image verification with Serper (forced for all image cases) ---
+    if image_bytes:
+        try:
+            logging.info("Running Serper enrichment for image verification (forced for all image cases)...")
+            serper_query = claim_text or await generate_image_caption(image_bytes, language, image_mime)
+            if serper_query:
+                serper_citations = await search_news_fallback(serper_query, language)
+                if serper_citations:
+                    existing_citations = gemini_result.get("citations", [])
+                    merged = existing_citations + serper_citations
+                    gemini_result["citations"] = merged[:10]
+                    logging.info(f"✅ Added {len(serper_citations)} Serper citations to image verification.")
+                else:
+                    logging.info("No Serper results for image verification query.")
+            else:
+                logging.info("Skipped Serper enrichment — no caption or text available for query.")
+        except Exception as e:
+            logging.warning(f"⚠️ Serper enrichment failed for image verification: {e}")
+
+    # --- Add Serper enrichment for videos as well ---
+    if image_bytes and image_mime.lower().startswith("video/"):
+        try:
+            logging.info("Running Serper enrichment for video verification...")
+            serper_query = text or "Verify authenticity of this video"
+            serper_citations = await search_news_fallback(serper_query, language)
+            if serper_citations:
+                existing_citations = gemini_result.get("citations", [])
+                gemini_result["citations"] = (existing_citations + serper_citations)[:10]
+                logging.info(f"✅ Added {len(serper_citations)} Serper citations to video verification.")
+        except Exception as e:
+            logging.warning(f"⚠️ Serper enrichment failed for video verification: {e}")
+
     # Manipulation detection using Gemini for claims
     manipulation_technique = None
     manipulation_explanation = None
@@ -948,7 +1018,7 @@ async def process_verification_request(
 
 Claim: {claim_text}
 """
-        model = GenerativeModel(GEMINI_MODEL)
+        model = get_gemini_model()
         loop = asyncio.get_event_loop()
         def call_model():
             try:
@@ -1249,9 +1319,9 @@ async def auto_adjust_confidence(request_id: str):
             "verdict": data_json.get("verdict", "unknown"),
             "confidence": new_confidence,
             "explanation": data_json.get("explanation", "")[:2000],
-            "citations": json.dumps(data_json.get("citations", [])),
+            "citations": json.dumps(data_json.get("citations", []), ensure_ascii=False),
             "timestamp": datetime.utcnow().isoformat(),
-            "data": json.dumps(data_json)
+            "data": json.dumps(data_json, ensure_ascii=False)
         }
         errors = bigquery_client.insert_rows_json(cache_table, [row])
         if errors:
@@ -1451,6 +1521,31 @@ def detect_language(text: str) -> str:
 # Gemini AI integration
 # Allow overriding the model via environment variable
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite")
+
+# --- Lazy Gemini initialization for faster startup ---
+GEMINI_MODEL_INSTANCE = None
+
+def get_gemini_model():
+    """Initialize Gemini model only once for reuse across requests."""
+    global GEMINI_MODEL_INSTANCE
+    if GEMINI_MODEL_INSTANCE is None:
+        try:
+            GEMINI_MODEL_INSTANCE = GenerativeModel(GEMINI_MODEL)
+            logging.info("✅ Gemini model initialized lazily")
+        except Exception as e:
+            logging.error(f"Gemini model initialization failed: {e}")
+            raise
+    return GEMINI_MODEL_INSTANCE
+
+@app.on_event("startup")
+async def warmup_model():
+    """Warm up Gemini model during startup to prevent cold-start lag"""
+    try:
+        _ = get_gemini_model()
+        logging.info("🔥 Gemini model warmed up successfully")
+    except Exception as e:
+        logging.error(f"Warmup failed: {e}")
+
 GEMINI_MODE = os.getenv("GEMINI_MODE", "vertex")  # vertex recommended (supports text+image)
 try:
     logging.info(f"✅ Using Gemini model: {GEMINI_MODEL} (mode={GEMINI_MODE})")
@@ -1514,20 +1609,39 @@ Rules:
 - Keep explanations concise and directly related to the claim and any attached image.
 """
 
-        model = GenerativeModel(GEMINI_MODEL)
-        generation_parts: List[Any] = [Part.from_text(prompt)]
-        if image_bytes:
-            generation_parts.append(Part.from_data(data=image_bytes, mime_type=image_mime or "image/jpeg"))
-        # Explicit logging before sending parts to Gemini
-        logging.error(f"Gemini input parts: {[type(p).__name__ for p in generation_parts]}")
-        try:
-            response = model.generate_content(generation_parts)
-        except InvalidArgument as exc:
-            logging.error(f"Gemini verification rejected input: {exc}")
-            raise HTTPException(status_code=400, detail="Gemini could not process the supplied media.")
-        except Exception as exc:
-            logging.error(f"Gemini verification failed: {exc}")
-            raise HTTPException(status_code=500, detail="AI verification failed")
+        model = get_gemini_model()
+
+        # --- PATCH: Video keyframe extraction for Gemini multimodal analysis (adaptive) ---
+        if image_bytes and image_mime.lower().startswith("video/"):
+            with tempfile.NamedTemporaryFile(suffix=".mp4", delete=True) as tmp:
+                tmp.write(image_bytes)
+                tmp.flush()
+                frames = extract_keyframes_bytes(tmp.name)
+                generation_parts = [Part.from_text(prompt)]
+                for frame_bytes in frames:
+                    generation_parts.append(Part.from_data(data=frame_bytes, mime_type="image/jpeg"))
+                logging.info(f"✅ Added {len(frames)} adaptively sampled keyframes for Gemini multimodal analysis.")
+                try:
+                    response = model.generate_content(generation_parts)
+                except InvalidArgument as exc:
+                    logging.error(f"Gemini verification rejected input: {exc}")
+                    raise HTTPException(status_code=400, detail="Gemini could not process the supplied media.")
+                except Exception as exc:
+                    logging.exception("Gemini verification failed", exc_info=True)
+                    raise HTTPException(status_code=500, detail=f"AI verification failed: {str(exc)}")
+        else:
+            generation_parts = [Part.from_text(prompt)]
+            if image_bytes:
+                generation_parts.append(Part.from_data(data=image_bytes, mime_type=image_mime or "image/jpeg"))
+            logging.error(f"Gemini input parts: {[type(p).__name__ for p in generation_parts]}")
+            try:
+                response = model.generate_content(generation_parts)
+            except InvalidArgument as exc:
+                logging.error(f"Gemini verification rejected input: {exc}")
+                raise HTTPException(status_code=400, detail="Gemini could not process the supplied media.")
+            except Exception as exc:
+                logging.exception("Gemini verification failed", exc_info=True)
+                raise HTTPException(status_code=500, detail=f"AI verification failed: {str(exc)}")
 
         model_text = getattr(response, "text", "")
         parsed = _parse_json_from_text(model_text)
@@ -1544,38 +1658,37 @@ Rules:
             "timestamp": datetime.utcnow().isoformat()
         }
     except Exception as e:
-        logging.error(f"Gemini verification failed: {e}")
-        raise HTTPException(status_code=500, detail="AI verification failed")
+        logging.exception("Gemini verification failed", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"AI verification failed: {str(e)}")
 
 # Google Fact Check API integration
 async def check_fact_check_api(text: str, language: str = "en") -> Dict[str, Any]:
-    """Check against Google Fact Check API"""
+    """Check against Google Fact Check API with robust fallback."""
     try:
-        # Map language codes
         lang_map = {"en": "en", "hi": "hi", "ta": "ta"}
-        query_lang = lang_map.get(language, "en")
-
         url = "https://factchecktools.googleapis.com/v1alpha1/claims:search"
-        # URL encode the query for safety
-        safe_text = quote(text, safe="")
+
         params = {
-            "query": safe_text,
-            "languageCode": query_lang,
-            "pageSize": 5
+            "query": text.strip(),
+            "languageCode": lang_map.get(language, "en"),
+            "pageSize": 5,
         }
 
-        # Use API key from environment (preferred for local) or Secret Manager (prefetch fallback)
         api_key = os.getenv("FACT_CHECK_API_KEY") or FACT_CHECK_API_KEY_PREFETCH or get_secret_cached("fact-check-api-key")
         if not api_key:
+            logging.warning("Fact Check API key missing — skipping API call.")
             return {"citations": [], "fact_check_results": []}
 
-        headers = {"X-Goog-Api-Key": api_key, "Content-Type": "application/json; charset=utf-8"}
+        headers = {
+            "X-Goog-Api-Key": api_key,
+            "Content-Type": "application/json; charset=utf-8",
+        }
 
-        response = requests.get(url, params=params, headers=headers)
+        response = requests.get(url, params=params, headers=headers, timeout=15)
+        logging.info(f"Fact Check API Request URL: {response.url}")
         response.raise_for_status()
 
         data = response.json()
-
         citations = []
         for claim in data.get("claims", []):
             for review in claim.get("claimReview", []):
@@ -1589,11 +1702,11 @@ async def check_fact_check_api(text: str, language: str = "en") -> Dict[str, Any
 
         return {
             "citations": citations,
-            "fact_check_results": data.get("claims", [])
+            "fact_check_results": data.get("claims", []),
         }
 
     except Exception as e:
-        logging.error(f"Fact Check API failed: {e}")
+        logging.error(f"Fact Check API failed or empty: {e}")
         return {"citations": [], "fact_check_results": []}
 
 # Storage operations
@@ -1619,7 +1732,7 @@ async def store_evidence(
         # Store response
         response_blob = bucket.blob(f"responses/{request_id}.json")
         response_blob.upload_from_string(
-            json.dumps(response_data, indent=2),
+            json.dumps(response_data, indent=2, ensure_ascii=False),
             content_type="application/json"
         )
         
@@ -1693,7 +1806,7 @@ async def verify_claim_test(request: dict):
 
 Claim: {bundle.get('claim_text','')}
 """
-                model = GenerativeModel(GEMINI_MODEL)
+                model = get_gemini_model()
                 loop = asyncio.get_event_loop()
                 def call_model():
                     try:
@@ -1713,11 +1826,12 @@ Claim: {bundle.get('claim_text','')}
                 response_payload["manipulation_explanation"] = None
         return response_payload
     except Exception as e:
-        logging.error(f"/verify-test failed: {e}")
-        return {"request_id": request_id, "error": "Verification failed", "verdict": "error"}
+        logging.exception(f"Verification failed for request {request_id}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Verification failed: {str(e)}")
 
 @app.post("/v1/verify")
 async def verify_claim(
+    request: Request,
     text: str = Form(""),
     mode: str = Form("fast"),
     language: str = Form("en"),
@@ -1728,6 +1842,18 @@ async def verify_claim(
     """Main verification endpoint. Accepts optional text and image."""
     start_time = datetime.utcnow()
     request_id = str(uuid.uuid4())
+
+    # --- PATCH START: Handle JSON body if present ---
+    if not text and not image:
+        try:
+            body = await request.json()
+            text = body.get("text", "")
+            language = body.get("language", "en")
+            mode = body.get("mode", "fast")
+            logging.info("verify_claim: JSON body detected (text length=%d, mode=%s, language=%s)", len(text or ""), mode, language)
+        except Exception:
+            pass
+    # --- PATCH END ---
 
     global PRIVACY_MODE
     # Determine privacy mode for this request
@@ -1749,6 +1875,20 @@ async def verify_claim(
             image_data = await image.read()
         elif local_privacy_mode:
             image_data = None
+
+        # --- removed early-return for image-only quick verification ---
+
+        # --- If image-only input without text, generate claim text automatically (full pipeline path) ---
+        if image_data and not text_value.strip():
+            logging.info("verify_claim: image-only request detected; running forensics + caption + Serper-enriched pipeline")
+            # Perform EXIF/C2PA extraction
+            forensics = await analyze_media_forensics(image_data, image_mime)
+            # Generate short caption and refine into a claim
+            caption = await generate_image_caption(image_data, language, image_mime)
+            if caption:
+                text_value = await refine_text_with_gemini(caption, language)
+            else:
+                text_value = "Verify authenticity of this image."
         # Redact text if privacy mode
         bundle = await process_verification_request(
             request_id=request_id,
@@ -1787,7 +1927,7 @@ async def verify_claim(
 
 Claim: {bundle.get('claim_text','')}
 """
-                model = GenerativeModel(GEMINI_MODEL)
+                model = get_gemini_model()
                 loop = asyncio.get_event_loop()
 
                 def call_model():
@@ -1840,8 +1980,8 @@ Claim: {bundle.get('claim_text','')}
         }
         return final_result
     except Exception as e:
-        logging.error(f"Verification failed for request {request_id}: {e}")
-        raise HTTPException(status_code=500, detail="Verification failed")
+        logging.exception(f"Verification failed for request {request_id}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Verification failed: {str(e)}")
     finally:
         # Restore previous privacy mode to avoid leaking state between requests
         PRIVACY_MODE = prev_privacy_mode
@@ -1863,168 +2003,116 @@ def calculate_cost(mode: str, text_length: int, has_image: bool) -> float:
 
     return base_cost + text_cost + image_cost + fact_check_cost
 
+async def _verify_with_gemini_fast(claim_text: str, media_bytes: bytes, media_mime: str, language: str) -> Dict[str, Any]:
+    """Fast-path Gemini verification for images/videos: focuses on authenticity and manipulation."""
+    try:
+        model = get_gemini_model()
+        current_year = datetime.utcnow().year
+        prompt = f"""
+You are a forensic authenticity checker.
+Your goal is to decide whether the attached media appears authentic, manipulated, or misleading.
+Respond ONLY in JSON:
+{{
+  "verdict": "true | false | misleading | unverifiable | unknown",
+  "confidence": number,
+  "explanation": string
+}}
+Rules:
+- Judge visual manipulation or inconsistencies directly.
+- If evidence is insufficient, prefer 'unverifiable' but do not mention missing frames or uncertainty.
+- Year {current_year} or later content may be synthetic.
+Claim: {claim_text}
+"""
+        response = model.generate_content([
+            Part.from_text(prompt),
+            Part.from_data(data=media_bytes, mime_type=media_mime or "image/jpeg"),
+        ])
+        parsed = _parse_json_from_text(getattr(response, "text", ""))
+        if parsed:
+            parsed.setdefault("timestamp", datetime.utcnow().isoformat())
+            return parsed
+    except Exception as e:
+        logging.error(f"_verify_with_gemini_fast failed: {e}")
+    return {
+        "verdict": "unverifiable",
+        "confidence": 0.2,
+        "explanation": "Fast verification failed to classify media authenticity.",
+        "timestamp": datetime.utcnow().isoformat(),
+    }
+
+
 # --- Unified media verification endpoint (image/video) ---
 @app.post("/v1/verify_media")
 async def verify_media(
     text: str = Form(""),
-    mode: str = Form("fast"),
     language: str = Form("en"),
-    file: Optional[UploadFile] = File(None),
-    privacy: bool = Form(False),
+    mode: str = Form("fast"),
+    file: UploadFile = File(...),
     api_key: str = Depends(verify_api_key)
 ):
     """
-    Unified media verification (image or video).
-    - For images: runs existing verify pipeline + EXIF/C2PA report.
-    - For videos: runs lightweight probe + first-keyframe hash, then verifies any provided text.
+    Unified media verification endpoint.
+    - For images: runs fast Gemini authenticity + forensics
+    - For videos: extracts keyframes, runs forensic analysis + Gemini
     """
     start_time = datetime.utcnow()
     request_id = str(uuid.uuid4())
-    global PRIVACY_MODE
-    local_privacy_mode = bool(privacy)
-    prev_privacy_mode = PRIVACY_MODE
-    PRIVACY_MODE = local_privacy_mode
+    language = language or "en"
+
     try:
-        # Defaults
-        text_value = text if text is not None else ""
+        if not file:
+            raise HTTPException(status_code=400, detail="No media file provided")
 
-        # Normalize meta or non-factual video verification text
-        if text_value.strip().lower().startswith("this video"):
-            text_value = "Verify whether this video appears authentic or manipulated."
+        media_bytes = await file.read()
+        media_mime = file.content_type or "application/octet-stream"
 
-        detected_lang = detect_language(text_value)
-        if language == "auto":
-            language = detected_lang
-
-        media_bytes = None
-        media_mime = None
-        if not local_privacy_mode and file:
-            media_mime = file.content_type or "application/octet-stream"
-            media_bytes = await file.read()
-
-        result_payload: Dict[str, Any] = {"request_id": request_id, "language": language, "mode": mode}
-
-        if media_bytes and (media_mime or "").lower().startswith("video/"):
-            # Video path: provide forensics; optional text verification without image context
-            forensics = await analyze_media_forensics(media_bytes, media_mime)
-            result_payload["media_forensics"] = forensics
-                        # --- Fuse forensics into Gemini reasoning (anti-disclaimer & confidence) ---
-            forensic_summary = json.dumps(forensics.get("deepfake_detection", {}), indent=2)
-            contextual_instruction = (
-                "You are receiving six frames sampled from the start, middle, and end of a short video. "
-                "Treat them as sequential snapshots from the same clip.\n\n"
-                f"Forensic report (deepfake detector):\n{forensic_summary}\n\n"
-                "Use only the frames and this forensic report to decide if the video is authentic, manipulated, or misleading. "
-                "Do not mention limited evidence, missing frames, or uncertainty due to short duration. "
-                "Respond decisively."
+        # --- Handle image verification (under 3s target) ---
+        if media_mime.startswith("image/"):
+            result = await _verify_with_gemini_fast(
+                claim_text=text or "Verify authenticity of this image.",
+                media_bytes=media_bytes,
+                media_mime=media_mime,
+                language=language,
             )
+            result["forensics"] = await analyze_media_forensics(media_bytes, media_mime)
+            result["type"] = "image"
+            latency = (datetime.utcnow() - start_time).total_seconds()
+            result["latency_sec"] = latency
+            return result
 
-            # --- New: run Gemini multimodal verification with multiple keyframes ---
-            keyframes = []
-            try:
-                with tempfile.NamedTemporaryFile(suffix=".mp4", delete=True) as tmp:
-                    tmp.write(media_bytes)
-                    tmp.flush()
-                    keyframes = extract_keyframes_bytes(tmp.name)
-            except Exception as e:
-                logging.error(f"Failed to extract keyframes: {e}")
+        # --- Handle video verification (forensics + Gemini) ---
+        elif media_mime.startswith("video/"):
+            with tempfile.NamedTemporaryFile(suffix=".mp4", delete=True) as tmp:
+                tmp.write(media_bytes)
+                tmp.flush()
 
-            gemini_results = []
-            for idx, frame_bytes in enumerate(keyframes):
-                try:
-                    gemini_result = await verify_with_gemini(
-                        claim_text=f"{text_value}\n\n{contextual_instruction}",
+                # Extract 3 keyframes and run forensics
+                keyframes = extract_keyframes_bytes(tmp.name, count=3)
+                forensic = await analyze_media_forensics(media_bytes, media_mime)
+
+                if keyframes:
+                    mid_frame = keyframes[len(keyframes)//2]
+                    result = await _verify_with_gemini_fast(
+                        claim_text=text or "Verify authenticity of this video.",
+                        media_bytes=mid_frame,
+                        media_mime="image/jpeg",
                         language=language,
-                        evidence=[],
-                        fact_check_results=[],
-                        image_bytes=frame_bytes,
-                        image_mime="image/jpeg",
                     )
-                    gemini_result["frame_index"] = idx
-                    gemini_results.append(gemini_result)
-                except Exception as e:
-                    logging.error(f"Gemini frame {idx} verification failed: {e}")
+                    result["media_forensics"] = forensic
+                    result["type"] = "video"
+                    latency = (datetime.utcnow() - start_time).total_seconds()
+                    result["latency_sec"] = latency
+                    return result
+                else:
+                    raise HTTPException(status_code=400, detail="No frames could be extracted from the video")
 
-            # Aggregate Gemini results if available
-            if gemini_results:
-                avg_confidence = sum(r.get("confidence", 0.0) for r in gemini_results) / len(gemini_results)
-                verdict_counts = {}
-                for r in gemini_results:
-                    v = r.get("verdict", "unverifiable")
-                    verdict_counts[v] = verdict_counts.get(v, 0) + 1
-                final_verdict = max(verdict_counts, key=verdict_counts.get)
-                result_payload["gemini_verification"] = {
-                    "verdict": final_verdict,
-                    "confidence": avg_confidence,
-                    "frames_analyzed": len(gemini_results),
-                    "explanations": [r.get("explanation", "") for r in gemini_results],
-                }
-                result_payload["verdict"] = final_verdict
-                result_payload["confidence"] = avg_confidence
-                result_payload["keyframe_analyzed"] = True
+        else:
+            raise HTTPException(status_code=400, detail=f"Unsupported media type: {media_mime}")
 
-            # If user supplied a claim, verify text-only (no image) to keep latency predictable on Cloud Run
-            if text_value.strip():
-                bundle = await process_verification_request(
-                    request_id=request_id,
-                    text=text_value,
-                    language=language,
-                    mode=mode,
-                    image_bytes=None,
-                    image_mime="image/jpeg",
-                )
-                result_payload.update(bundle["result"])
-            else:
-                result_payload.update({
-                    "verdict": "unverifiable",
-                    "confidence": 0.3,
-                    "explanation": "Video received. Provide a specific claim to verify against the video.",
-                    "key_facts": [],
-                    "citations": [],
-                    "fact_check_results": [],
-                    "timestamp": datetime.utcnow().isoformat()
-                })
-            # Metrics/log
-            latency = (datetime.utcnow() - start_time).total_seconds() * 1000
-            cost = calculate_cost(mode, len(text_value), has_image=False)
-            result_payload["metrics"] = {"latency_ms": latency, "cost_usd": cost}
-            return result_payload
-
-        # Image or no file: fall back to existing behavior (image path uses existing pipeline)
-        image_bytes = media_bytes if (media_bytes and (media_mime or "").lower().startswith("image/")) else None
-        image_mime = media_mime if image_bytes else "image/jpeg"
-
-        bundle = await process_verification_request(
-            request_id=request_id,
-            text="[REDACTED]" if local_privacy_mode else text_value,
-            language=language,
-            mode=mode,
-            image_bytes=image_bytes,
-            image_mime=image_mime,
-        )
-        final_result = bundle["result"].copy()
-        final_result.update({"request_id": request_id, "language": language, "mode": mode})
-
-        # Attach forensics for images
-        if image_bytes:
-            try:
-                final_result["forensics"] = await analyze_media_forensics(image_bytes, image_mime)
-            except Exception as e:
-                logging.error(f"forensics attach failed: {e}")
-
-        latency = (datetime.utcnow() - start_time).total_seconds() * 1000
-        cost = calculate_cost(mode, len(text_value), has_image=bool(image_bytes))
-        await asyncio.gather(
-            store_evidence(request_id, image_bytes, final_result, existing_image_uri=bundle.get("image_uri"), image_mime=image_mime) if (image_bytes and not local_privacy_mode) else asyncio.sleep(0),
-            log_request(request_id, text_value, mode, language, final_result.get("verdict","unknown"), float(final_result.get("confidence") or 0.0), latency, cost)
-        )
-        final_result["metrics"] = {"latency_ms": latency, "cost_usd": cost}
-        return final_result
     except Exception as e:
-        logging.error(f"/v1/verify_media failed: {e}")
-        raise HTTPException(status_code=500, detail="Media verification failed")
-    finally:
-        PRIVACY_MODE = prev_privacy_mode
+        logging.error(f"/verify_media failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Media verification failed: {str(e)}")
+        
 
 # --- Alias endpoint for video verification ---
 @app.post("/v1/verify_video")
@@ -2315,7 +2403,7 @@ async def save_auto_verification_row(row: Dict[str, Any]) -> None:
             "verdict": row.get("verdict") or "unknown",
             "confidence": float(row.get("confidence") or 0.0),
             "explanation": (row.get("explanation") or "")[:5000],
-            "sources": json.dumps(row.get("sources") or []),
+            "sources": json.dumps(row.get("sources") or [], ensure_ascii=False),
             "language": row.get("language") or "en"
         }]
         errors = bigquery_client.insert_rows_json(table_fqn, payload)
