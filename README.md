@@ -8,7 +8,7 @@ An Android App that provides one-tap fact verification from any mobile app via t
 
 Click below to download and install the latest APK:
 
-[⬇️ Download Pramana APK](https://github.com/channi23/OrangeLens/raw/5afe77a3c4b69c1507b54a9da36efdf99817d337/Pramana-v3-debug.apk)
+[⬇️ Download Pramana APK](https://github.com/channi23/OrangeLens/releases/download/v4.0/Pramana-Version-4.apk)
 
 note: while downloading don't scan the app , it may stop the installation
 

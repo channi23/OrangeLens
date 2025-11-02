@@ -70,6 +70,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -97,6 +98,7 @@ import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import coil.compose.AsyncImage
 import com.example.truthlens.R
+import com.example.truthlens.core.parseVerifyResult
 import com.example.truthlens.ui.theme.VerifyUiState
 import kotlinx.coroutines.delay
 import okhttp3.Call
@@ -118,10 +120,17 @@ import java.util.concurrent.TimeUnit
 // API Endpoints
 private const val API_KEY = "AIzaSyDwfXPXq_ArGiVi7EAaT-fVTkOHUb_NXzA" // Replace with your actual API key
 private const val BASE_URL = "https://truthlens-api-276376440888.us-central1.run.app/v1"
+private const val VERIFY_URL = "$BASE_URL/verify"
 private const val VERIFY_MEDIA_URL = "$BASE_URL/verify_media"
-private const val TRENDING_URL = "$BASE_URL/trending"
 private const val FEEDBACK_URL = "$BASE_URL/feedback"
+private const val TRENDING_URL = "$BASE_URL/trending"
 
+// Attach both headers; backend may accept either Authorization: Bearer or x-api-key
+private fun Request.Builder.withAuth(): Request.Builder {
+    return this
+        .header("Authorization", "Bearer $API_KEY")
+        .header("x-api-key", API_KEY)
+}
 
 // Theming
 private val LightBackground = Color(0xFFFAFAFA)
@@ -164,6 +173,7 @@ fun getDarkTheme() = ThemeColors(
     border = DarkBorder,
     muted = DarkMuted
 )
+
 // Data Classes
 data class SearchHistoryItem(
     val id: String = System.currentTimeMillis().toString(),
@@ -173,7 +183,7 @@ data class SearchHistoryItem(
     val verdict: String? = null,
     val explanation: String? = null,
     val confidence: Double = 0.0,
-    val citations: List<Pair<String, String>> = emptyList(),
+    val citationsDetailed: List<Pair<String, String>> = emptyList(),
     val requestId: String? = null,
     val isVideoVerification: Boolean = false,
     val deepfakeDetected: Boolean = false,
@@ -210,9 +220,10 @@ fun VerifyScreen(
 
     val client = remember {
         OkHttpClient.Builder()
-            .connectTimeout(90, TimeUnit.SECONDS)
-            .readTimeout(90, TimeUnit.SECONDS)
-            .writeTimeout(90, TimeUnit.SECONDS)
+            .connectTimeout(120, TimeUnit.SECONDS)
+            .readTimeout(120, TimeUnit.SECONDS)
+            .writeTimeout(120, TimeUnit.SECONDS)
+            .retryOnConnectionFailure(true)
             .build()
     }
     val mainHandler = remember { Handler(Looper.getMainLooper()) }
@@ -223,11 +234,12 @@ fun VerifyScreen(
         val storageDir = ctx.getExternalFilesDir(Environment.DIRECTORY_PICTURES)
         storageDir?.mkdirs()
         val timeStamp = System.currentTimeMillis()
+        the@ run { }
         val imageFile = File(storageDir, "IMG_${timeStamp}.jpg")
         return FileProvider.getUriForFile(ctx, "${ctx.packageName}.provider", imageFile)
     }
 
-    // --- NEW: Unified media picker ---
+    // --- Unified media picker (unchanged) ---
     val pickMediaLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri ->
@@ -237,7 +249,7 @@ fun VerifyScreen(
             selectedMediaType = when {
                 mimeType?.startsWith("video/") == true -> "video"
                 mimeType?.startsWith("image/") == true -> "image"
-                else -> null // Or handle unsupported types
+                else -> null
             }
         }
     }
@@ -267,6 +279,8 @@ fun VerifyScreen(
 
     fun addToHistory(text: String, uri: Uri?, verifyState: VerifyUiState) {
         if (text.trim().isNotEmpty() || uri != null) {
+            // Use citationsDetailed if available and non-empty, else store emptyList
+            val citationsToStore = verifyState.citationsDetailed.takeIf { it.isNotEmpty() } ?: emptyList()
             searchHistory = listOf(
                 SearchHistoryItem(
                     text = text,
@@ -274,7 +288,7 @@ fun VerifyScreen(
                     verdict = verifyState.verdict,
                     explanation = verifyState.explanation,
                     confidence = verifyState.confidence,
-                    citations = verifyState.citations,
+                    citationsDetailed = citationsToStore,
                     requestId = verifyState.requestId,
                     isVideoVerification = verifyState.isVideoVerification,
                     deepfakeDetected = verifyState.deepfakeDetected,
@@ -287,8 +301,8 @@ fun VerifyScreen(
     fun fetchTrendingItems() {
         loadingTrending = true
         val request = Request.Builder()
+            .withAuth()
             .url(TRENDING_URL)
-            .header("Authorization", "Bearer $API_KEY")
             .get()
             .build()
 
@@ -308,11 +322,13 @@ fun VerifyScreen(
                             if (trendingArray != null) {
                                 for (i in 0 until trendingArray.length()) {
                                     val item = trendingArray.getJSONObject(i)
-                                    items.add(TrendingItem(
-                                        text = item.optString("text", ""),
-                                        count = item.optInt("count", 0),
-                                        lastSeen = item.optString("last_seen", "")
-                                    ))
+                                    items.add(
+                                        TrendingItem(
+                                            text = item.optString("text", ""),
+                                            count = item.optInt("count", 0),
+                                            lastSeen = item.optString("last_seen", "")
+                                        )
+                                    )
                                 }
                             }
                             mainHandler.post {
@@ -331,12 +347,18 @@ fun VerifyScreen(
         })
     }
 
-    fun postAndRender(request: Request, originalText: String) {
+    fun postAndRender(request: Request, originalText: String, isVideoVerification: Boolean? = null) {
         state = state.copy(loading = true, status = "Verifying...", verdict = null, showRetry = false)
         client.newCall(request).enqueue(object : Callback {
             override fun onFailure(call: Call, ex: IOException) {
                 mainHandler.post {
-                    val errorState = VerifyUiState(loading = false, status = "Verification Failed", explanation = "Network Error: ${ex.message}", verdict = "Error", showRetry = true)
+                    val errorState = VerifyUiState(
+                        loading = false,
+                        status = "Verification Failed",
+                        explanation = "Network Error: ${ex.message}",
+                        verdict = "Error",
+                        showRetry = true
+                    )
                     state = errorState
                     addToHistory(originalText, selectedMediaUri, errorState)
                 }
@@ -345,13 +367,32 @@ fun VerifyScreen(
             override fun onResponse(call: Call, response: Response) {
                 response.use {
                     val bodyStr = it.body?.string()
+                    val maybeJson = try { if (bodyStr != null) JSONObject(bodyStr) else null } catch (_: Exception) { null }
                     val ui = if (it.isSuccessful && bodyStr != null) {
-                        parseResult(bodyStr).copy(imageUri = selectedMediaUri)
+                        parseVerifyResult(bodyStr).copy(imageUri = selectedMediaUri)
                     } else {
-                        VerifyUiState(loading = false, status = "Verification Failed", explanation = "Server Error ${it.code}: ${bodyStr ?: "Unknown error"}", verdict = "Error", showRetry = true)
+                        VerifyUiState(
+                            loading = false,
+                            status = "Verification Failed",
+                            explanation = buildString {
+                                append("Server Error ${it.code}")
+                                val detail = maybeJson?.optString("detail")?.takeIf { d -> d.isNotBlank() }
+                                    ?: maybeJson?.optString("message")?.takeIf { d -> d.isNotBlank() }
+                                if (detail != null) append(": $detail")
+                                else if (!bodyStr.isNullOrBlank()) append(": $bodyStr")
+                            },
+                            verdict = "Error",
+                            showRetry = true
+                        )
                     }
-                    addToHistory(originalText, selectedMediaUri, ui)
-                    mainHandler.post { state = ui }
+                    val finalUi = if (isVideoVerification != null) ui.copy(isVideoVerification = isVideoVerification) else ui
+                    android.util.Log.e(
+                        "VerifyRequest",
+                        "HTTP ${response.code} ${response.message} | isVideo=$isVideoVerification | body=${bodyStr?.take(1000)}"
+                    )
+                    android.util.Log.e("VerifyResponse", "Full response body: ${bodyStr?.take(3000)}")
+                    addToHistory(originalText, selectedMediaUri, finalUi)
+                    mainHandler.post { state = finalUi }
                 }
             }
         })
@@ -361,68 +402,194 @@ fun VerifyScreen(
         val jsonBody = JSONObject().apply {
             put("request_id", requestId)
             put("feedback", feedbackType)
+            // Add fallback comment field for backend
+            put("comment", "User feedback from app")
         }.toString()
 
         val requestBody = jsonBody.toRequestBody("application/json".toMediaTypeOrNull())
 
         val request = Request.Builder()
+            .withAuth()
             .url(FEEDBACK_URL)
-            .header("Authorization", "Bearer $API_KEY")
             .post(requestBody)
             .build()
 
         client.newCall(request).enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) {
+                android.util.Log.e("Feedback", "Feedback failed to send: ${e.message}", e)
                 mainHandler.post { Toast.makeText(context, "Feedback failed to send.", Toast.LENGTH_SHORT).show() }
             }
 
             override fun onResponse(call: Call, response: Response) {
-                mainHandler.post {
-                    if (response.isSuccessful) {
-                        Toast.makeText(context, "Thank you for your feedback!", Toast.LENGTH_SHORT).show()
+                try {
+                    mainHandler.post {
+                        if (response.isSuccessful) {
+                            Toast.makeText(context, "Thank you for your feedback!", Toast.LENGTH_SHORT).show()
+                        } else {
+                            android.util.Log.e("Feedback", "Feedback API error: ${response.code} - ${response.message}")
+                        }
                     }
+                } finally {
+                    response.close()
                 }
-                response.close()
             }
         })
     }
 
+    fun getSupportedLanguage(ctx: Context): String {
+        val localeLang = Locale.getDefault().language
+        return when (localeLang.lowercase()) {
+            "en", "hi", "ta", "te" -> localeLang.lowercase()
+            else -> "en"
+        }
+    }
+
     fun sendTextOnly(text: String) {
-        val mp = MultipartBody.Builder()
-            .setType(MultipartBody.FORM)
-            .addFormDataPart("text", text)
-            .addFormDataPart("language", "en")
-            .addFormDataPart("mode", "quick")
+        val jsonBody = JSONObject().apply {
+            put("text", text)
+            put("language", getSupportedLanguage(context))
+            put("mode", "fast")
+        }.toString().toRequestBody("application/json".toMediaTypeOrNull())
+
+        val jsonReq = Request.Builder()
+            .withAuth()
+            .url(VERIFY_URL)
+            .post(jsonBody)
             .build()
-        val req = Request.Builder().url(VERIFY_MEDIA_URL).header("Authorization", "Bearer $API_KEY").post(mp).build()
-        postAndRender(req, text)
+
+        state = state.copy(loading = true, status = "Verifying...", verdict = null, showRetry = false)
+
+        client.newCall(jsonReq).enqueue(object : Callback {
+            override fun onFailure(call: Call, ex: IOException) {
+                val errorState = VerifyUiState(
+                    loading = false,
+                    status = "Verification Failed",
+                    explanation = "Network Error: ${ex.message}",
+                    verdict = "Error",
+                    showRetry = true
+                )
+                mainHandler.post { state = errorState }
+                addToHistory(text, null, errorState)
+            }
+
+            override fun onResponse(call: Call, response: Response) {
+                response.use {
+                    val bodyStr = it.body?.string()
+                    if (it.isSuccessful && bodyStr != null) {
+                        val ui = parseVerifyResult(bodyStr)
+                        addToHistory(text, null, ui)
+                        mainHandler.post { state = ui }
+                    } else {
+                        // 🔄 fallback for form-data (in case backend expects multipart)
+                        val mp = MultipartBody.Builder()
+                            .setType(MultipartBody.FORM)
+                            .addFormDataPart("text", text)
+                            .addFormDataPart("language", getSupportedLanguage(context))
+                            .addFormDataPart("mode", "fast")
+                            .build()
+                        val formReq = Request.Builder()
+                            .withAuth()
+                            .url(VERIFY_URL)
+                            .post(mp)
+                            .build()
+                        client.newCall(formReq).enqueue(object : Callback {
+                            override fun onFailure(call2: Call, ex2: IOException) {
+                                val errorState = VerifyUiState(
+                                    loading = false,
+                                    status = "Verification Failed",
+                                    explanation = "Network Error: ${ex2.message}",
+                                    verdict = "Error",
+                                    showRetry = true
+                                )
+                                mainHandler.post { state = errorState }
+                            }
+
+                            override fun onResponse(call2: Call, response2: Response) {
+                                response2.use {
+                                    val bodyStr2 = it.body?.string()
+                                    if (it.isSuccessful && bodyStr2 != null) {
+                                        val ui2 = parseVerifyResult(bodyStr2)
+                                        addToHistory(text, null, ui2)
+                                        mainHandler.post { state = ui2 }
+                                    } else {
+                                        val uiFail = VerifyUiState(
+                                            loading = false,
+                                            status = "Verification Failed",
+                                            explanation = "Server Error: ${it.code}",
+                                            verdict = "Error",
+                                            showRetry = true
+                                        )
+                                        mainHandler.post { state = uiFail }
+                                    }
+                                }
+                            }
+                        })
+                    }
+                }
+            }
+        })
     }
 
     fun sendMedia(uri: Uri, text: String, mediaType: String, ctx: Context) {
-        val formPartName = "file"
-        val endpoint = VERIFY_MEDIA_URL
+        // ✅ Use verify for image/text, verify_media for video
+        val endpoint = if (mediaType == "video") VERIFY_MEDIA_URL else VERIFY_URL
 
-        val fileName = if (mediaType == "video") "upload.mp4" else "upload.jpg"
-        val mimeType = if (mediaType == "video") "video/mp4" else "image/jpeg"
+        val fileName = when (mediaType) {
+            "video" -> "upload.mp4"
+            "image" -> "upload.jpg"
+            else -> "upload.bin"
+        }
+
+        val mimeType = when (mediaType) {
+            "video" -> "video/mp4"
+            "image" -> "image/jpeg"
+            else -> "application/octet-stream"
+        }
 
         state = state.copy(loading = true, status = "Uploading ${mediaType}...")
+        android.util.Log.d("VerifyMedia", "Uploading $mediaType → $endpoint")
+
         try {
             val inputStream = ctx.contentResolver.openInputStream(uri)
             val tempFile = File.createTempFile("upload", ".tmp", ctx.cacheDir).apply {
                 outputStream().use { out -> inputStream?.copyTo(out) }
             }
-            val mp = MultipartBody.Builder()
-                .setType(MultipartBody.FORM)
-                .addFormDataPart("text", text)
-                .addFormDataPart("language", "en")
-                .addFormDataPart("mode", "quick")
-                .addFormDataPart(formPartName, fileName, tempFile.asRequestBody(mimeType.toMediaTypeOrNull()))
-                .build()
+            android.util.Log.d("VerifyMedia", "File path: ${tempFile.absolutePath}, Size: ${tempFile.length()} bytes, MediaType: $mediaType, Text: \"${text}\"")
 
-            val req = Request.Builder().url(endpoint).header("Authorization", "Bearer $API_KEY").post(mp).build()
-            postAndRender(req, text)
+            val mpBuilder = MultipartBody.Builder()
+                .setType(MultipartBody.FORM)
+                // Only send empty string if no text, don't send placeholder for media-only
+                .addFormDataPart("text", if (text.isNotBlank()) text else "")
+                .addFormDataPart("language", getSupportedLanguage(ctx))
+                .addFormDataPart("mode", "fast")
+
+            // Add force_refresh only for video
+            if (mediaType == "video") {
+                mpBuilder.addFormDataPart("force_refresh", "true")
+            }
+
+            if (mediaType == "video") {
+                mpBuilder.addFormDataPart("file", fileName, tempFile.asRequestBody(mimeType.toMediaTypeOrNull()))
+            } else {
+                mpBuilder.addFormDataPart("image", fileName, tempFile.asRequestBody(mimeType.toMediaTypeOrNull()))
+            }
+
+            val mp = mpBuilder.build()
+
+            val req = Request.Builder()
+                .withAuth()
+                .url(endpoint)
+                .post(mp)
+                .build()
+            postAndRender(req, text, isVideoVerification = (mediaType == "video"))
         } catch (ex: Exception) {
-            val errorState = VerifyUiState(loading = false, status = "File Error", explanation = "Could not process ${mediaType}: ${ex.message}", verdict = "Error", showRetry = true)
+            val errorState = VerifyUiState(
+                loading = false,
+                status = "File Error",
+                explanation = "Could not process ${mediaType}: ${ex.message}",
+                verdict = "Error",
+                showRetry = true
+            )
             state = errorState
             addToHistory(input, selectedMediaUri, errorState)
         }
@@ -430,6 +597,11 @@ fun VerifyScreen(
 
     LaunchedEffect(initialText) {
         if (!initialText.isNullOrBlank()) sendTextOnly(initialText)
+    }
+
+    // Warm up Cloud Run to reduce first-request latency (cold start)
+    LaunchedEffect(Unit) {
+        warmUpBackend(client, mainHandler)
     }
 
     Box(modifier = Modifier.fillMaxSize().background(colors.background)) {
@@ -477,7 +649,7 @@ fun VerifyScreen(
                         onInputChange = { input = it },
                         selectedMediaUri = selectedMediaUri,
                         selectedMediaType = selectedMediaType,
-                        onPickMedia = { pickMediaLauncher.launch("*/*") }, // Changed
+                        onPickMedia = { pickMediaLauncher.launch("*/*") },
                         onTakePhoto = {
                             when (PackageManager.PERMISSION_GRANTED) {
                                 ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) -> {
@@ -498,6 +670,7 @@ fun VerifyScreen(
                             if (selectedMediaUri != null && selectedMediaType != null) {
                                 sendMedia(selectedMediaUri!!, t, selectedMediaType!!, context)
                             } else if (t.isNotEmpty()) {
+                                // URL or plain-text: both supported by backend via text
                                 sendTextOnly(t)
                             }
                         },
@@ -542,10 +715,12 @@ fun VerifyScreen(
                     input = item.text
                     selectedMediaUri = item.mediaUri
                     selectedMediaType = if (item.mediaUri != null) if (item.isVideoVerification) "video" else "image" else null
+                    // For restoring state, set only citationsDetailed to item.citationsDetailed
                     state = VerifyUiState(
                         loading = false, status = "Done", verdict = item.verdict,
                         explanation = item.explanation, confidence = item.confidence,
-                        citations = item.citations, imageUri = item.mediaUri,
+                        citationsDetailed = item.citationsDetailed, // Ensure citationsDetailed is populated for restored state
+                        imageUri = item.mediaUri,
                         showRetry = false, requestId = item.requestId,
                         isVideoVerification = item.isVideoVerification,
                         deepfakeDetected = item.deepfakeDetected,
@@ -561,6 +736,34 @@ fun VerifyScreen(
 }
 
 // All other composables (TrendingScreen, MainInputScreen, ResultScreen, etc.) follow here...
+
+// Warm up Cloud Run to reduce first-request latency (cold start)
+private fun warmUpBackend(client: OkHttpClient, mainHandler: Handler) {
+    val warmupRequest = Request.Builder()
+        .withAuth()
+        .url("$BASE_URL/healthcheck")
+        .get()
+        .build()
+
+    // Try /healthcheck; if it 404s, fall back to TRENDING_URL which is cheap
+    client.newCall(warmupRequest).enqueue(object : Callback {
+        override fun onFailure(call: Call, e: IOException) {
+            // Fallback to trending (do nothing with response)
+            val fallback = Request.Builder()
+                .withAuth()
+                .url(TRENDING_URL)
+                .get()
+                .build()
+            client.newCall(fallback).enqueue(object : Callback {
+                override fun onFailure(call2: Call, e2: IOException) { /* ignore */ }
+                override fun onResponse(call2: Call, response2: Response) { response2.close() }
+            })
+        }
+        override fun onResponse(call: Call, response: Response) {
+            response.close()
+        }
+    })
+}
 
 @Composable
 private fun TrendingScreen(
@@ -793,7 +996,6 @@ private fun MainInputScreen(
                         modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
                         horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically
                     ) {
-                        // --- NEW: Simplified buttons ---
                         Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
                             MediaButton(onClick = onPickMedia, icon = Icons.Rounded.Image, text = if (selectedMediaUri != null) "Change" else "Add Media", isSelected = selectedMediaUri != null, colors = colors)
                             MediaButton(onClick = onTakePhoto, icon = Icons.Rounded.CameraAlt, text = "Camera", isSelected = false, colors = colors)
@@ -812,7 +1014,7 @@ private fun MainInputScreen(
         Spacer(Modifier.height(20.dp))
         OutlineCleanButton(onClick = onExploreTrending, text = "Explore Trending", icon = Icons.Rounded.TrendingUp, colors = colors)
         Spacer(Modifier.height(24.dp))
-        Text("Trusted by users · 98.2% accuracy rate", style = MaterialTheme.typography.bodySmall, color = colors.muted, textAlign = TextAlign.Center)
+        Text("An OrangeXAI Production.", style = MaterialTheme.typography.bodySmall, color = colors.muted, textAlign = TextAlign.Center)
     }
 }
 
@@ -835,7 +1037,6 @@ private fun MediaButton(onClick: () -> Unit, icon: ImageVector, text: String, is
     }
 }
 
-
 @Composable
 private fun ResultScreen(
     state: VerifyUiState,
@@ -845,7 +1046,7 @@ private fun ResultScreen(
 ) {
     val context = LocalContext.current
     var feedbackSent by remember { mutableStateOf(false) }
-
+    var showCitations by remember { mutableStateOf(false) }
 
     val verdictColor = when (state.verdict?.uppercase()) {
         "TRUE" -> SuccessGreen
@@ -959,7 +1160,7 @@ private fun ResultScreen(
         ) {
             Column(modifier = Modifier.padding(16.dp)) {
                 Text(
-                    "Summary",
+                    "Verdict Summary",
                     style = MaterialTheme.typography.labelLarge.copy(
                         fontWeight = FontWeight.Bold
                     ),
@@ -975,71 +1176,150 @@ private fun ResultScreen(
             }
         }
 
-        if (state.isVideoVerification) {
+        // Collapsible citations pane (always show toggle when citations exist)
+        val citationsList = state.citationsDetailed.takeIf { it.isNotEmpty() }
+        if (citationsList != null) {
             Spacer(Modifier.height(16.dp))
-            DeepfakeResultCard(state = state, colors = colors)
-        }
-
-
-        Spacer(Modifier.height(24.dp))
-
-        if (state.citations.isNotEmpty()) {
-            Text(
-                "Verified sources · ${state.citations.size}",
-                style = MaterialTheme.typography.labelMedium,
-                color = colors.muted
-            )
-
-            Spacer(Modifier.height(12.dp))
-
-            state.citations.forEach { (title, url) ->
-                Surface(
-                    onClick = { if (url.isNotBlank()) openUrl(url) },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 4.dp),
-                    color = colors.card,
-                    shape = RoundedCornerShape(12.dp),
-                    border = BorderStroke(1.dp, colors.border)
-                ) {
-                    Row(
-                        modifier = Modifier.padding(16.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                color = colors.card,
+                shape = RoundedCornerShape(12.dp),
+                border = BorderStroke(1.dp, colors.border)
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text(
+                        "Citations · ${citationsList.size}",
+                        style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
+                        color = colors.foreground
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    TextButton(
+                        onClick = { showCitations = !showCitations },
+                        modifier = Modifier.align(Alignment.Start)
                     ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                title,
-                                style = MaterialTheme.typography.bodyMedium.copy(
-                                    fontWeight = FontWeight.SemiBold
-                                ),
-                                color = colors.foreground,
-                                maxLines = 2,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                            if (url.isNotBlank()) {
-                                Spacer(Modifier.height(4.dp))
-                                Text(
-                                    "Reliability: High",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = colors.muted
-                                )
+                        Text(
+                            if (showCitations) "Hide Citations" else "Show Citations",
+                            color = colors.buttonPrimary
+                        )
+                    }
+                    AnimatedVisibility(
+                        visible = showCitations,
+                        enter = fadeIn() + expandVertically(),
+                        exit = fadeOut() + shrinkVertically()
+                    ) {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            citationsList.forEach { (title, url) ->
+                                Surface(
+                                    onClick = { if (url.isNotBlank()) openUrl(url) },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    color = colors.card,
+                                    shape = RoundedCornerShape(10.dp),
+                                    border = BorderStroke(1.dp, colors.border)
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(14.dp),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                title,
+                                                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
+                                                color = colors.foreground,
+                                                maxLines = 2,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                            if (url.isNotBlank()) {
+                                                Spacer(Modifier.height(4.dp))
+                                                Text(
+                                                    url,
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                    color = colors.muted,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis
+                                                )
+                                            }
+                                        }
+                                        if (url.isNotBlank()) {
+                                            Icon(
+                                                imageVector = Icons.Rounded.OpenInNew,
+                                                contentDescription = "Open citation",
+                                                tint = colors.muted,
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                        }
+                                    }
+                                }
                             }
-                        }
-                        if (url.isNotBlank()) {
-                            Icon(
-                                imageVector = Icons.Rounded.OpenInNew,
-                                contentDescription = "Open link",
-                                tint = colors.muted,
-                                modifier = Modifier.size(18.dp)
-                            )
                         }
                     }
                 }
             }
         }
 
-        Spacer(Modifier.height(32.dp))
+        val negativeVerdicts = setOf("FALSE", "MISLEADING", "SUSPICIOUS", "INCORRECT", "FAKE", "DECEPTIVE")
+        val normalizedVerdict = state.verdict?.uppercase()
+        val isNegativeVerdict = normalizedVerdict != null && normalizedVerdict in negativeVerdicts
+
+        val shouldShowManipulationCard =
+            isNegativeVerdict && (
+                !state.manipulationTechnique.isNullOrBlank() ||
+                !state.manipulationExplanation.isNullOrBlank()
+            )
+
+        // Manipulation Technique Card: show whenever backend supplies details, or verdict is negative
+        if (shouldShowManipulationCard) {
+            Spacer(Modifier.height(20.dp))
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                color = Color(0xFF1E293B).copy(alpha = 0.05f),
+                shape = RoundedCornerShape(12.dp),
+                border = BorderStroke(1.dp, Color(0xFF1E293B).copy(alpha = 0.2f))
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    val techniqueLabel = when {
+                        !state.manipulationTechnique.isNullOrBlank() -> state.manipulationTechnique
+                        normalizedVerdict != null && normalizedVerdict in negativeVerdicts -> "Not provided"
+                        else -> "Unknown"
+                    }
+                    val explanationText = when {
+                        !state.manipulationExplanation.isNullOrBlank() -> state.manipulationExplanation
+                        normalizedVerdict != null && normalizedVerdict in negativeVerdicts -> "No manipulation notes returned by the backend."
+                        else -> "No further explanation provided."
+                    }
+                    Text(
+                        "Manipulation Technique: $techniqueLabel",
+                        style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
+                        color = Color(0xFF1E293B)
+                    )
+                    Text(
+                        explanationText,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = colors.foreground,
+                        lineHeight = 22.sp
+                    )
+                    if (!state.timestamp.isNullOrBlank()) {
+                        Text(
+                            "Detected on: ${state.timestamp}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = colors.muted
+                        )
+                    }
+                }
+            }
+        }
+
+        if (state.isVideoVerification) {
+            Spacer(Modifier.height(16.dp))
+            DeepfakeResultCard(state = state, colors = colors)
+        }
+
+        Spacer(Modifier.height(24.dp))
+
+        Spacer(Modifier.height(28.dp))
         // Feedback Section
         AnimatedContent(targetState = feedbackSent, label = "feedback_transition") { hasSentFeedback ->
             if (hasSentFeedback) {
@@ -1048,7 +1328,12 @@ private fun ResultScreen(
                 }
             } else {
                 Column {
-                    Text("Was this result helpful?", style = MaterialTheme.typography.labelMedium, color = colors.muted, modifier = Modifier.align(Alignment.CenterHorizontally))
+                    Text(
+                        "Was this result helpful?",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = colors.muted,
+                        modifier = Modifier.align(Alignment.CenterHorizontally)
+                    )
                     Spacer(Modifier.height(12.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         OutlinedButton(
@@ -1083,7 +1368,7 @@ private fun ResultScreen(
 
 @Composable
 private fun DeepfakeResultCard(state: VerifyUiState, colors: ThemeColors) {
-    val statusColor = if(state.deepfakeDetected) ErrorRed else SuccessGreen
+    val statusColor = if (state.deepfakeDetected) ErrorRed else SuccessGreen
     Surface(
         modifier = Modifier.fillMaxWidth(),
         color = statusColor.copy(alpha = 0.05f),
@@ -1421,54 +1706,5 @@ private fun LoadingScreen(status: String, colors: ThemeColors) {
                 )
             }
         }
-    }
-}
-
-private fun parseResult(result: String): VerifyUiState {
-    return try {
-        val json = JSONObject(result)
-        val verdict = json.optString("verdict", "N/A").uppercase()
-        val explanation = json.optString("explanation", "No explanation provided")
-        val confidence = json.optDouble("confidence", 0.0)
-        val requestId = json.optString("request_id", null)
-        val citationsArr = json.optJSONArray("citations")
-        val citations = buildList {
-            if (citationsArr != null) {
-                for (i in 0 until citationsArr.length()) {
-                    val c = citationsArr.getJSONObject(i)
-                    add(c.optString("title", "Source") to c.optString("url", ""))
-                }
-            }
-        }
-
-        // Check for video-specific results
-        val deepfakeJson = json.optJSONObject("deepfake_detection")
-        val isVideo = deepfakeJson != null
-
-        val deepfakeDetected = deepfakeJson?.optString("status") == "suspicious"
-        val deepfakeConfidence = deepfakeJson?.optDouble("confidence", 0.0) ?: 0.0
-
-
-        VerifyUiState(
-            loading = false,
-            status = "Done",
-            verdict = verdict,
-            explanation = explanation,
-            confidence = confidence,
-            citations = citations,
-            showRetry = false,
-            requestId = requestId,
-            isVideoVerification = isVideo,
-            deepfakeDetected = deepfakeDetected,
-            deepfakeConfidence = deepfakeConfidence
-        )
-    } catch (ex: Exception) {
-        VerifyUiState(
-            loading = false,
-            status = "Parsing error",
-            explanation = "Could not parse response: ${ex.message}",
-            verdict = "Unknown",
-            showRetry = true
-        )
     }
 }

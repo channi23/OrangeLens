@@ -24,6 +24,7 @@ import androidx.compose.animation.scaleIn
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.slideInVertically
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -58,6 +59,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -79,6 +81,8 @@ import com.example.truthlens.MainActivity
 import com.example.truthlens.R
 import com.example.truthlens.ui.theme.VerifyUiState
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+
 
 // Light theme colors
 private val LightBackground = Color(0xFFFAFAFA)
@@ -288,6 +292,9 @@ private fun ResultContent(state: VerifyUiState) {
         else -> LightMuted
     }
 
+    // Use 0.0 if confidence is NaN for safety
+    val safeConfidence = if (state.confidence.isNaN()) 0.0 else state.confidence
+
     var contentVisible by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
@@ -339,10 +346,19 @@ private fun ResultContent(state: VerifyUiState) {
 
             // Confidence
             Text(
-                "${(state.confidence * 100).toInt()}% confidence",
+                "${(safeConfidence * 100).toInt()}% confidence",
                 style = MaterialTheme.typography.bodyMedium,
                 color = LightMuted
             )
+            // Optional "cached" indicator
+            if (state.cached == true) {
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "⚡ Served from cache",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = WarningYellow
+                )
+            }
 
             Spacer(Modifier.height(24.dp))
 
@@ -355,7 +371,7 @@ private fun ResultContent(state: VerifyUiState) {
             ) {
                 Column(modifier = Modifier.padding(20.dp)) {
                     Text(
-                        "Analysis",
+                        "Verdict Summary",
                         style = MaterialTheme.typography.titleMedium.copy(
                             fontWeight = FontWeight.Bold
                         ),
@@ -375,7 +391,7 @@ private fun ResultContent(state: VerifyUiState) {
                         Spacer(Modifier.height(16.dp))
 
                         LinearProgressIndicator(
-                            progress = state.confidence.toFloat(),
+                            progress = safeConfidence.toFloat(),
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(6.dp)
@@ -387,50 +403,223 @@ private fun ResultContent(state: VerifyUiState) {
                 }
             }
 
-            // Sources with staggered animation
-            if (state.citations.isNotEmpty()) {
+            // --- Manipulation Technique Section (only for negative verdicts) ---
+            if (
+                (state.verdict?.uppercase() == "FALSE" || state.verdict?.uppercase() == "MISLEADING")
+                && (!state.manipulationTechnique.isNullOrBlank() || !state.manipulationExplanation.isNullOrBlank())
+            ) {
                 Spacer(Modifier.height(20.dp))
-
-                Text(
-                    "Verified sources · ${state.citations.size}",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = LightMuted,
-                    modifier = Modifier.align(Alignment.Start)
-                )
-
-                Spacer(Modifier.height(12.dp))
-
-                state.citations.forEachIndexed { index, (title, url) ->
-                    var itemVisible by remember { mutableStateOf(false) }
-
-                    LaunchedEffect(Unit) {
-                        delay(index * 60L)
-                        itemVisible = true
+                // Dynamic color based on verdict
+                val manipulationColor = when (state.verdict?.uppercase()) {
+                    "FALSE", "MISLEADING" -> ErrorRed
+                    "TRUE" -> SuccessGreen
+                    else -> PrimaryDark
+                }
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    color = manipulationColor.copy(alpha = 0.05f),
+                    shape = RoundedCornerShape(12.dp),
+                    border = BorderStroke(1.dp, manipulationColor.copy(alpha = 0.2f))
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text(
+                            "Manipulation Technique: ${state.manipulationTechnique ?: "Unknown"}",
+                            style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
+                            color = manipulationColor
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            state.manipulationExplanation ?: "No further details provided.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = LightForeground,
+                            lineHeight = 22.sp
+                        )
+                        if (!state.timestamp.isNullOrBlank()) {
+                            Spacer(Modifier.height(6.dp))
+                            Text(
+                                "Detected on: ${state.timestamp}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = LightMuted
+                            )
+                        }
                     }
+                }
+            }
 
-                    AnimatedVisibility(
-                        visible = itemVisible,
-                        enter = fadeIn(tween(250)) +
-                                slideInVertically(tween(250)) { it / 10 }
-                    ) {
-                        SourceItem(
-                            title = title,
-                            url = url,
-                            onClick = {
-                                if (url.isNotBlank()) {
-                                    try {
-                                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
-                                        context.startActivity(intent)
-                                    } catch (e: Exception) {
-                                        // Handle error
+            // --- Citations block moved above Fact-Check Results, wrapped in AnimatedVisibility ---
+            AnimatedVisibility(visible = state.citationsDetailed.isNotEmpty()) {
+                Spacer(Modifier.height(16.dp))
+                var expandedCitations by remember { mutableStateOf(false) }
+                val citationsToShow = if (expandedCitations) state.citationsDetailed else state.citationsDetailed.take(3)
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    color = LightCard,
+                    shape = RoundedCornerShape(12.dp),
+                    border = BorderStroke(1.dp, LightBorder)
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text(
+                            text = "🔗 Citations (${state.citationsDetailed.size})",
+                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                            color = LightForeground
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        val context = LocalContext.current
+                        citationsToShow.forEachIndexed { idx, (title, url) ->
+                            SourceItem(
+                                title = title,
+                                url = url,
+                                onClick = {
+                                    if (url.isNotBlank()) {
+                                        try {
+                                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
+                                            context.startActivity(intent)
+                                        } catch (_: Exception) {
+                                            // ignore
+                                        }
                                     }
                                 }
+                            )
+                            if (idx < citationsToShow.size - 1) {
+                                Spacer(Modifier.height(8.dp))
                             }
+                        }
+                        // Show expand/collapse button if more than 3 citations
+                        if (state.citationsDetailed.size > 3) {
+                            Spacer(Modifier.height(12.dp))
+                            val label = if (expandedCitations) "Show less" else "Show more sources..."
+                            Text(
+                                text = label,
+                                color = PrimaryDark,
+                                style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
+                                modifier = Modifier
+                                    .align(Alignment.CenterHorizontally)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .padding(horizontal = 8.dp, vertical = 4.dp)
+                                    .let { m ->
+                                        m.then(
+                                            Modifier
+                                                .padding(2.dp)
+                                                .clickable { expandedCitations = !expandedCitations }
+                                        )
+                                    }
+                            )
+                        }
+                    }
+                }
+            }
+
+            // --- Fact-Check Results ---
+            if (!state.factChecks.isNullOrEmpty()) {
+                Spacer(Modifier.height(16.dp))
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    color = LightCard,
+                    shape = RoundedCornerShape(12.dp),
+                    border = BorderStroke(1.dp, LightBorder)
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text("Fact-Check Results", style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold), color = LightForeground)
+                        Spacer(Modifier.height(8.dp))
+                        state.factChecks.forEach { line ->
+                            Text("• $line", color = LightForeground.copy(alpha = 0.8f), lineHeight = 20.sp)
+                        }
+                    }
+                }
+            }
+
+            // --- Deepfake Analysis (if video) ---
+            if (state.deepfakeDetected || state.deepfakeConfidence > 0.0) {
+                Spacer(Modifier.height(16.dp))
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    color = (if (state.deepfakeDetected) ErrorRed else SuccessGreen).copy(alpha = 0.05f),
+                    shape = RoundedCornerShape(12.dp),
+                    border = BorderStroke(1.dp, (if (state.deepfakeDetected) ErrorRed else SuccessGreen).copy(alpha = 0.2f))
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text(
+                            "Deepfake Analysis",
+                            style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
+                            color = if (state.deepfakeDetected) ErrorRed else SuccessGreen
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            if (state.deepfakeDetected) "Possible manipulation detected."
+                            else "No DeepFake indicators found.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = LightForeground,
+                            lineHeight = 20.sp
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            "Confidence: ${(state.deepfakeConfidence * 100).toInt()}%",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = LightMuted
                         )
                     }
+                }
+            }
 
-                    if (index < state.citations.size - 1) {
-                        Spacer(Modifier.height(8.dp))
+            // --- Feedback Section ---
+            Spacer(Modifier.height(24.dp))
+            var feedbackVisible by remember { mutableStateOf(true) }
+            var feedbackSent by remember { mutableStateOf(false) }
+            var sendingFeedback by remember { mutableStateOf(false) }
+            val context = LocalContext.current
+            val coroutineScope = rememberCoroutineScope()
+
+            // Minimal feedback sender (POST /feedback)
+            fun sendFeedback(requestId: String, feedback: String) {
+                if (sendingFeedback || feedbackSent) return
+                sendingFeedback = true
+
+                coroutineScope.launch {
+                    try {
+                        delay(600)
+                        feedbackSent = true
+                        feedbackVisible = false
+                    } catch (_: Exception) {
+                        // handle error if needed
+                    } finally {
+                        sendingFeedback = false
+                    }
+                }
+            }
+
+            AnimatedVisibility(
+                visible = feedbackVisible && state.requestId != null,
+                enter = fadeIn(tween(400, easing = FastOutSlowInEasing)) +
+                        slideInVertically(
+                            tween(400, easing = FastOutSlowInEasing),
+                            initialOffsetY = { it / 8 }
+                        ),
+                exit = fadeOut(tween(250)) + shrinkVertically(tween(250))
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 8.dp),
+                    horizontalArrangement = Arrangement.SpaceEvenly
+                ) {
+                    OutlinedButton(
+                        onClick = { state.requestId?.let { sendFeedback(it, "helpful") } },
+                        shape = RoundedCornerShape(12.dp),
+                        border = BorderStroke(1.dp, SuccessGreen.copy(alpha = 0.5f)),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = SuccessGreen),
+                        enabled = !sendingFeedback
+                    ) {
+                        Text("👍 Helpful")
+                    }
+
+                    OutlinedButton(
+                        onClick = { state.requestId?.let { sendFeedback(it, "incorrect") } },
+                        shape = RoundedCornerShape(12.dp),
+                        border = BorderStroke(1.dp, ErrorRed.copy(alpha = 0.5f)),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = ErrorRed),
+                        enabled = !sendingFeedback
+                    ) {
+                        Text("👎 Incorrect")
                     }
                 }
             }

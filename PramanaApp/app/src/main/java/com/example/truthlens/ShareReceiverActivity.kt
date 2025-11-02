@@ -11,6 +11,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import com.example.truthlens.core.parseVerifyResult
 import com.example.truthlens.ui.VerifyResultSheet
 import com.example.truthlens.ui.theme.PramanaTheme
 import com.example.truthlens.ui.theme.VerifyUiState
@@ -22,7 +23,6 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
-import org.json.JSONObject
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 
@@ -201,32 +201,5 @@ class ShareReceiverActivity : ComponentActivity() {
         }
     }
 
-    private fun parseResult(result: String): VerifyUiState {
-        return try {
-            val json = JSONObject(result)
-            val verdict = json.optString("verdict", "N/A").uppercase()
-            val explanation = json.optString("explanation", "No explanation provided")
-            val confidence = json.optDouble("confidence", 0.0)
-            val citationsArr = json.optJSONArray("citations")
-            val citations = buildList {
-                if (citationsArr != null) {
-                    for (i in 0 until citationsArr.length()) {
-                        val c = citationsArr.getJSONObject(i)
-                        add(c.optString("title", "Source") to c.optString("url", ""))
-                    }
-                }
-            }
-            VerifyUiState(
-                loading = false,
-                status = "Done",
-                verdict = verdict,
-                explanation = explanation,
-                confidence = confidence,
-                citations = citations,
-                showRetry = false
-            )
-        } catch (e: Exception) {
-            VerifyUiState(loading = false, status = "Parsing error", verdict = "Unknown", showRetry = true)
-        }
-    }
+    private fun parseResult(result: String): VerifyUiState = parseVerifyResult(result)
 }

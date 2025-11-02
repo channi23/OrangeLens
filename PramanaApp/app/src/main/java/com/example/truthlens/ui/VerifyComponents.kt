@@ -216,7 +216,7 @@ fun ResultCard(state: VerifyUiState, modifier: Modifier = Modifier) {
                         verdictColor = verdictColor,
                         delay = 0
                     ) {
-                        ModernSectionHeader(title = "Analysis", verdictColor = verdictColor)
+                        ModernSectionHeader(title = "Verdict Summary", verdictColor = verdictColor)
                         Spacer(Modifier.height(12.dp))
                         Text(
                             text = state.explanation,
@@ -231,25 +231,83 @@ fun ResultCard(state: VerifyUiState, modifier: Modifier = Modifier) {
                     }
                 }
 
-                // Sources card
-                if (state.citations.isNotEmpty()) {
+                // Manipulation Technique and Explanation card
+                if (!state.manipulationTechnique.isNullOrBlank()) {
+                    ContentCard(
+                        verdictColor = verdictColor,
+                        delay = 50
+                    ) {
+                        ModernSectionHeader(title = "Manipulation Technique", verdictColor = verdictColor)
+                        Spacer(Modifier.height(12.dp))
+                        Text(
+                            text = state.manipulationTechnique,
+                            style = MaterialTheme.typography.bodyLarge.copy(
+                                lineHeight = 26.sp,
+                                fontSize = 15.sp,
+                                letterSpacing = 0.15.sp,
+                                fontWeight = FontWeight.Normal
+                            ),
+                            color = ComponentTextPrimary.copy(alpha = 0.9f)
+                        )
+
+                        if (!state.manipulationExplanation.isNullOrBlank()) {
+                            Spacer(Modifier.height(12.dp))
+                            Text(
+                                text = state.manipulationExplanation,
+                                style = MaterialTheme.typography.bodyMedium.copy(
+                                    lineHeight = 22.sp,
+                                    fontSize = 14.sp
+                                ),
+                                color = ComponentTextSecondary
+                            )
+                        }
+                    }
+                }
+
+                // Citations card with collapsible citations
+                val citationsList: List<Pair<String, String>> = state.citationsDetailed
+                if (citationsList.isNotEmpty()) {
+                    var showCitations by remember { mutableStateOf(false) }
                     ContentCard(
                         verdictColor = verdictColor,
                         delay = 100
                     ) {
                         ModernSectionHeader(
-                            title = "Sources · ${state.citations.size}",
+                            title = "Citations · ${citationsList.size}",
                             verdictColor = verdictColor
                         )
                         Spacer(Modifier.height(12.dp))
-                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            state.citations.forEachIndexed { index, (title, url) ->
-                                AnimatedSourceItem(
-                                    title = title,
-                                    url = url,
-                                    verdictColor = verdictColor,
-                                    delay = index * 50
-                                )
+                        // Toggle button
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { showCitations = !showCitations },
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = if (showCitations) "Hide Citations" else "Show Citations",
+                                style = MaterialTheme.typography.labelLarge.copy(
+                                    fontWeight = FontWeight.Medium
+                                ),
+                                color = verdictColor
+                            )
+                        }
+                        AnimatedVisibility(
+                            visible = showCitations,
+                            enter = fadeIn() + expandVertically(),
+                            exit = fadeOut() + shrinkVertically()
+                        ) {
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                citationsList.forEachIndexed { index, pair ->
+                                    val title = pair.first
+                                    val url = pair.second
+                                    AnimatedSourceItem(
+                                        title = title,
+                                        url = url,
+                                        verdictColor = verdictColor,
+                                        delay = index * 50
+                                    )
+                                }
                             }
                         }
                     }

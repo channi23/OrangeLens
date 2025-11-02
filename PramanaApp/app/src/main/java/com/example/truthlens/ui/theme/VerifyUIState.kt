@@ -1,4 +1,3 @@
-// File: app/src/main/java/com/example/truthlens/ui/theme/VerifyUiState.kt
 package com.example.truthlens.ui.theme
 
 import android.net.Uri
@@ -9,10 +8,19 @@ data class VerifyUiState(
     val verdict: String? = null,
     val explanation: String? = "",
     val confidence: Double = 0.0,
-    val citations: List<Pair<String, String>> = emptyList(),
+    // Detailed citations from backend as list of title-URL pairs
+    val citationsDetailed: List<Pair<String, String>> = emptyList(),
     val sources: List<String> = emptyList(),
     val showRetry: Boolean = false,
     val imageUri: Uri? = null,
+    val keyFacts: List<String> = emptyList(),
+    val factChecks: List<String> = emptyList(),
+    val manipulationTechnique: String? = null,
+    val manipulationExplanation: String? = null,
+    // Indicates if manipulation data is present
+    val hasManipulationData: Boolean = false,
+    val timestamp: String? = null,
+    val cached: Boolean? = null ,
 
     // Link scanning fields
     val linksFound: Int = 0,
