@@ -1,7 +1,7 @@
 # Pramana - AI-Powered Fact Verification
 
 
-An App that provides one-tap fact verification from any mobile app via the system Share sheet , with transparent AI explanations and verified citations.
+An Android App that provides one-tap fact verification from any mobile app via the system Share sheet, with transparent AI explanations and verified citations.
 
 
 ## 📱 Download Pramana
@@ -13,35 +13,30 @@ Click below to download and install the latest APK:
 note: while downloading don't scan the app , it may stop the installation
 
 ## 🎯 USP
-One-tap fact verification from any mobile app via the system Share sheet enabling fast, reliable checks with minimal effort. Backed by Retrieval-Augmented Generation (RAG) for contextual accuracy and transparent AI explanations with verified citations. Built on Google Cloud for scalability, cost-efficiency, and trust. Designed for ease of use with fewer steps and seamless integration.
+One-tap fact verification from any mobile app via the system Share sheet enabling fast, reliable checks with minimal effort. Backed by Retrieval-Augmented Generation (RAG) for contextual accuracy and transparent AI explanations with verified citations. Built on Google Cloud for scalability, cost-efficiency, and trust. Designed for ease of use with fewer steps and seamless integration on Android.
+
 
 ## 🏗️ Architecture
 
 ```
 TruthLens/
-├── app/                    # Progressive Web App (React)
-│   ├── src/               # React source code
-│   ├── public/             # Static assets (includes service worker)
-│   ├── manifest.json       # PWA manifest
-│   └── public/sw.js        # Service worker
 ├── api/                    # Backend API (Cloud Run)
-│   ├── main.py            # FastAPI application
+│   ├── main.py            # FastAPI application with integrated Vision API and Serper search
 │   ├── requirements.txt   # Python dependencies
-│   └── Dockerfile        # Container configuration
+│   └── Dockerfile        # Container configuration with async Vision calls support
 ├── infra/                  # Infrastructure configs
 │   ├── terraform/         # Terraform configurations
 │   ├── cloudbuild.yaml   # Cloud Build config
 │   └── api-gateway.yaml  # API Gateway spec
+├── vision/                 # Vision API integration for entity and face recognition
+├── cache/                  # BigQuery caching layer for verification responses
 ├── scripts/               # Deployment scripts
 └── docs/                  # Documentation
 ```
 
 ## 🚀 Quick Start
 
-<span style="font-size:2em; font-weight:bold;">### Linux/macOS Setup</span>
-
 ### Prerequisites
-- Node.js 16+
 - Python 3.11+
 - Google Cloud SDK
 - GCP Project with billing enabled
@@ -55,7 +50,7 @@ cd OrangeLens
 # Setup your specific project (orange-lens-472108)
 ./scripts/setup-orange-lens.sh
 
-# Start development servers
+# Start backend development server
 ./scripts/start-dev.sh
 ```
 
@@ -66,21 +61,24 @@ cd OrangeLens
 ```
 
 ## 📱 Features
-- ✅ **One-tap verification** from any app via Share sheet
+- ✅ **One-tap verification** from any Android app via Share sheet
 - ✅ **Text and image verification** using AI
 - ✅ **Fast/Deep verification modes**
 - ✅ **Multi-language support** (English, Hindi, Tamil)
-- ✅ **Offline support** with service worker
 - ✅ **Real-time metrics** (latency, cost)
 - ✅ **Transparent AI explanations**
 - ✅ **Verified citations** from fact-check databases
+- ✅ **Vision-based celebrity and object detection**
+- ✅ **Smart video frame sampling** for improved authenticity verification
+- ✅ **Cached verification responses** for faster results
+- ✅ **Clickable citations and collapsible sections** in the app
 
 ## 🔧 Tech Stack
-- **Frontend**: React PWA, Service Worker, Web Share Target
-- **Backend**: Cloud Run, API Gateway, Vertex AI Gemini
-- **Data**: BigQuery, Cloud Storage, Google Fact Check API
+- **Android Client**: Native Android app using system Share sheet
+- **Backend**: Cloud Run with caching, API Gateway, Vertex AI Gemini, Google Cloud Vision API
+- **Data**: BigQuery caching, Cloud Storage, Google Fact Check API
 - **Security**: Secret Manager, API Keys/JWT
-- **Monitoring**: Cloud Logging, Cloud Monitoring
+- **Monitoring**: Cloud Logging, Cloud Monitoring with latency and cache hit ratio tracking
 - **Infrastructure**: Terraform, Cloud Build
 
 ## 📊 Cost Estimate
@@ -88,15 +86,13 @@ cd OrangeLens
 
 ## 🏃‍♂️ Getting Started
 
-<span style="font-size:2em ; font-weight:bold;">### Linux/macOS</span>
-
 ### 1. Setup Development Environment
 ```bash
 ./scripts/setup-dev.sh
 ```
 
-### 2. Run Locally (Backend + Frontend)
-Follow these steps to run the API and PWA locally for development.
+### 2. Run Locally (Backend API)
+Follow these steps to run the API locally for development.
 
 #### Backend API (FastAPI)
 1) Configure environment
@@ -122,8 +118,8 @@ uvicorn main:app --reload --host 0.0.0.0 --port 8080
 ```
 3) Quick tests
 ```bash
-# Fast (text)
-curl -X POST http://localhost:8080/v1/verify-test \
+# Fast (text, image, hybrid verification)
+curl -X POST http://localhost:8080/v1/verify \
   -H 'Content-Type: application/json' \
   -d '{"text":"The Earth orbits the Sun.","language":"en"}'
 
@@ -133,23 +129,11 @@ curl -X POST http://localhost:8080/v1/verify-image-test \
 ```
 
 Notes
+- `/v1/verify` now supports text, image, and hybrid verification with integrated Serper search and Vision-based entity detection.
 - Gemini requests default to Vertex Gemini 2.5 Flash Lite (service account auth). Set `GEMINI_MODE=vertex` unless you specifically need the Express REST API.
 - Evidence retrieval first queries Google Fact Check Tools; if nothing is found, it falls back to a news search (Serper.dev) when `SERPER_API_KEY` is configured.
 - Deep checks (or low confidence) can call Google Fact Check API when `FACT_CHECK_API_KEY` is provided.
 
-#### Frontend PWA (React)
-1) Configure environment
-```bash
-cd app
-echo "REACT_APP_API_URL=http://localhost:8080" > .env
-# Optional only if using authenticated /v1/verify locally:
-# echo "REACT_APP_API_KEY=YOUR_TRUTHLENS_API_KEY" >> .env
-```
-2) Start development server
-```bash
-npm install
-npm start
-```
 ### 3. Test the API (optional)
 ```bash
 ./scripts/test-api.sh
@@ -175,13 +159,11 @@ export PROJECT_ID="orange-lens-472108"
 ### Manual Deployment Steps
 1. **Enable APIs**: Run the deployment script
 2. **Create Infrastructure**: Deploy Terraform configurations
-3. **Build & Deploy API**: Cloud Build + Cloud Run
-4. **Deploy PWA**: Build and deploy to hosting service
-5. **Configure Monitoring**: Set up alerts and dashboards
+3. **Build & Deploy API**: Cloud Build + Cloud Run with automatic scaling and async Vision API calls support
+4. **Configure Monitoring**: Set up alerts and dashboards
 
 ## 📚 Documentation
 - [API Documentation](api/README.md)
-- [PWA Documentation](app/README.md)
 - [Infrastructure Documentation](infra/README.md)
 
 ## 🧪 Testing
@@ -199,12 +181,6 @@ curl -H "Authorization: Bearer test-key" \
      http://localhost:8080/v1/verify
 ```
 
-### PWA Testing
-1. Open http://localhost:3000
-2. Test share functionality
-3. Verify offline support
-4. Check service worker
-
 ## 🔒 Security
 - **API Keys**: Bearer token authentication
 - **Service Accounts**: IAM-based permissions
@@ -217,23 +193,21 @@ curl -H "Authorization: Bearer test-key" \
 - **Cloud Monitoring**: Metrics and alerting
 - **BigQuery**: Analytics and reporting
 - **Uptime Checks**: Service availability
+- **Additional**: Supports latency tracking and cache hit ratio logging for performance insights
 
 ## 🛠️ Development
 
 ### Project Structure
 ```
 TruthLens/
-├── app/                    # React PWA
-│   ├── src/App.js          # Main React component
-│   ├── src/App.css          # Styles
-│   ├── public/index.html    # HTML template
-│   ├── manifest.json        # PWA manifest
-│   └── public/sw.js        # Service worker
-├── api/                     # Python FastAPI
-│   ├── main.py             # Main API application
+├── api/                     # Python FastAPI backend
+│   ├── main.py             # Main API application with Vision API integration
 │   ├── simple_main.py      # Simple development server
 │   ├── requirements.txt    # Dependencies
-│   └── Dockerfile          # Container config
+│   └── Dockerfile          # Container config with async Vision support
+├── vision/                  # Vision API integration modules
+├── cache/                   # BigQuery caching layer
+│   ├── cache_manager.py    # Cache handling logic
 ├── infra/                   # Infrastructure
 │   ├── terraform/          # Terraform configs
 │   ├── cloudbuild.yaml     # CI/CD config
@@ -246,9 +220,10 @@ TruthLens/
 
 ### Adding Features
 1. **API**: Add endpoints in `api/main.py`
-2. **PWA**: Add components in `app/src/`
-3. **Infrastructure**: Update Terraform configs
-4. **Monitoring**: Add metrics and alerts
+2. **Vision**: Add entity and face recognition features in `vision/`
+3. **Cache**: Implement caching logic in `cache/`
+4. **Infrastructure**: Update Terraform configs
+5. **Monitoring**: Add metrics and alerts including latency and cache hit ratio
 
 ## 🤝 Contributing
 1. Fork the repository
@@ -372,7 +347,7 @@ When it starts, visit:
 - API Root: http://127.0.0.1:8080
 - Interactive Docs: http://127.0.0.1:8080/docs
 
-If you are also running the React app from `app/`, set `REACT_APP_API_URL=http://localhost:8080` and run `npm start` as documented above.
+If you are also running the Android app, set the API URL accordingly.
 
 ### 🛠️ Troubleshooting
 - path to .JSON keys in gcloud (Googlecloud->console->secret manager-> create secret->now make the key or if key exists click on the three dots and copy the json into a file )
