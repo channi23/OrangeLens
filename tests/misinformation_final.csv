@@ -1,0 +1,170 @@
+SNO,type_of_verification,content,label,category
+1,text,Railways to provide free Wi-Fi and food on all express trains from March 2025.,FALSE,Technology
+2,text,Government to give free laptops to every student under 25.,FALSE,Politics
+3,text,National cybersecurity centre inaugurated in Hyderabad.,TRUE,Technology
+4,text,India to start visa-free travel with the US from next month.,FALSE,Politics
+5,text,Metro to become free for all women across India from April 2025.,FALSE,Politics
+6,text,AI-based national ID card to replace Aadhaar by the end of 2025.,FALSE,Politics
+7,text,New Education Policy implementation began across all CBSE schools.,TRUE,Politics
+8,text,National anthem to be changed with AI-generated version.,FALSE,Technology
+9,text,Petrol price reduced to 50 per litre starting tomorrow.,FALSE,Economy
+10,text,Government to install face recognition in all classrooms.,FALSE,Politics
+11,text,Government to make Hindi mandatory in all universities.,FALSE,Politics
+12,text,Students to be promoted automatically without exams in 2025.,FALSE,Politics
+13,text,Hyderabad emerged as India's leading city for AI startups this year.,TRUE,Technology
+14,text,New law to ban all old diesel cars immediately.,FALSE,Politics
+15,text,Government employees to get a 50% salary hike from April 2025.,FALSE,Politics
+16,text,ISRO planning to build space hotel by 2030.,FALSE,Politics
+17,text,RBI introduced offline UPI Lite payment system for rural areas.,TRUE,Economy
+18,text,Schools across India to shift permanently to online mode from 2025 academic year.,FALSE,Politics
+19,text,Government to provide free air conditioners under heatwave scheme.,FALSE,Politics
+20,text,All engineering exams to be merged under one national test from 2025.,FALSE,Politics
+21,text,gold price reduced to 1000 rupees per gram starting tomorrow.,FALSE,Economy
+22,text,"New rule for adults , alcohol to be at 50% off for teenager",FALSE,Politics
+23,text,All gold jewelry to be digitally tagged with chip from 2025.,FALSE,Technology
+24,text,Electric vehicle sales surpassed diesel cars in India in 2025.,TRUE,Politics
+25,text,Passport validity extended to lifetime under new rule.,FALSE,Politics
+26,text,Government employees to get a 50% salary hike from April 2025.,FALSE,Politics
+27,text,CBSE cancels Class 12 exams due to policy changes.,FALSE,Politics
+28,text,Schools across India to shift permanently to online mode from 2025 academic year.,FALSE,Politics
+29,text,Government declares national holiday for India's AI Day celebration in June 2025.,FALSE,Politics
+30,text,Schools across India to shift permanently to online mode from 2025 academic year.,FALSE,Politics
+31,text,India introduces social media rating system for citizens.,FALSE,Politics
+32,text,Government to provide free electric bikes for students below 25 years of age.,FALSE,Politics
+33,text,All engineering exams to be merged under one national test from 2025.,FALSE,Politics
+34,text,India to host 2025 Olympics after Paris withdrawal.,FALSE,Sports
+35,text,Income tax to be removed for people earning below 15 lakh per year.,FALSE,Economy
+36,text,Free 5G internet to be launched nationwide on Republic Day 2025.,FALSE,Politics
+37,text,Government planning to tax memes shared online.,FALSE,Politics
+38,text,Mobile radiation declared national emergency in 2025.,FALSE,Politics
+39,text,All engineering exams to be merged into one national test in 2025.,FALSE,Politics
+40,text,All currency notes to get digital tracking chips by December 2025.,FALSE,Economy
+41,text,India's internet to shut down for maintenance on 1st May 2025.,FALSE,Technology
+42,text,India became world's third-largest renewable energy producer in 2025.,TRUE,Politics
+43,text,Government to provide free electric bikes for students below 25 years of age.,FALSE,Politics
+44,text,India bans all international social media apps temporarily.,FALSE,Politics
+45,text,All currency notes to get digital tracking chips by December 2025.,FALSE,Economy
+46,text,RBI to replace physical cash with digital-only Rupee by 2026.,FALSE,Economy
+47,text,Government announces three-day work week for IT sector employees.,FALSE,Politics
+48,text,Income tax to be removed for people earning below ₹15 lakh per year.,FALSE,Economy
+49,text,Government to impose fine for not using electric vehicles.,FALSE,Politics
+50,text,Petrol price reduced to 50 per litre starting tomorrow.,FALSE,Economy
+51,text,Banks to issue biometric-only debit cards nationwide.,FALSE,Politics
+52,text,Petrol price reduced to 50 per litre starting tomorrow.,FALSE,Economy
+53,text,India's GDP growth projected at 6.9% for FY 2025-26.,TRUE,Economy
+54,text,India to start visa-free travel with the US from next month.,FALSE,Politics
+55,text,ISRO successfully tested reusable rocket booster technology this year.,TRUE,Technology
+56,text,All roads in India to be converted to smart roads by next year.,FALSE,Politics
+57,text,India launches floating city project in Arabian Sea.,FALSE,Politics
+58,text,New law to make wearing helmets optional for electric scooters.,FALSE,Politics
+59,text,Government to provide free electric bikes for students below 25 years of age.,FALSE,Politics
+60,text,Free 5G internet to be launched nationwide on Republic Day 2025.,FALSE,Politics
+61,text,India to start Mars migration plan for citizens in 2025.,FALSE,Politics
+62,text,India becomes permanent member of UN Security Council.,FALSE,Politics
+63,text,Government announces three-day work week for IT sector employees.,FALSE,Politics
+64,text,India has won the 2025 Cricket World Cup after a dramatic final.,FALSE,Sports
+65,text,"New 5000 note to be introduced next month, old 2000 notes invalid soon.",FALSE,Politics
+66,text,Government employees to get a 50% salary hike from April 2025.,FALSE,Politics
+67,text,"Government to give 50,000 compensation for social media addiction cases.",FALSE,Politics
+68,text,Parliament passes bill to make work-from-home mandatory twice a week.,FALSE,Politics
+69,text,Government to ban alcohol sales nationwide from next week.,FALSE,Politics
+70,text,India launched its first domestic quantum computing cloud service in 2025.,TRUE,Technology
+71,text,IITs introduced mandatory AI ethics course from 2025 session.,TRUE,Technology
+72,text,Digital Rupee transactions exceeded 2 trillion in March 2025.,TRUE,Economy
+73,text,Income tax to be removed for people earning below 15 lakh per year.,FALSE,Economy
+74,text,All college admissions to be handled by AI chatbot from next year.,FALSE,Technology
+75,text,New expressway connecting Bengaluru and Chennai opened for public use in 2025.,TRUE,Technology
+76,text,Government announces three-day work week for IT sector employees.,FALSE,Politics
+77,text,"PM to distribute 5,000 to every citizen via new app.",FALSE,Technology
+78,text,Central universities started integrated AI and robotics degrees.,TRUE,Technology
+79,text,AI-based national ID card to replace Aadhaar by the end of 2025.,FALSE,Politics
+80,text,RBI increased repo rate to stabilize inflation in 2025.,TRUE,Economy
+81,text,"New 5000 note to be introduced next month, old 2000 notes invalid soon.",FALSE,Politics
+82,text,New law to make wearing helmets optional for electric scooters.,FALSE,Politics
+83,text,All currency notes to get digital tracking chips by December 2025.,FALSE,Economy
+84,text,Government declares AI robots as legal citizens of India.,FALSE,Politics
+85,text,UPI transactions to be taxed from July 2025.,FALSE,Economy
+86,text,New AI-enabled passport verification launched in 2025.,TRUE,Technology
+87,text,"New 5000 note to be introduced next month, old 2000 notes invalid soon.",FALSE,Politics
+88,text,India discovers new oil reserve under Himalayas.,FALSE,Politics
+89,text,Government to ban alcohol sales nationwide from next week.,FALSE,Politics
+90,text,India signed green energy pact with Japan in 2025.,TRUE,Politics
+91,text,"All final-year students to get 10,000 scholarship under new government scheme.",FALSE,Politics
+92,text,Indian Railways started driverless metro pilot in Delhi in early 2025.,TRUE,Technology
+93,text,CBSE to introduce 'AI chatbots' as exam invigilators in 2025.,FALSE,Politics
+94,text,Government declares national holiday for India's AI Day celebration in June 2025.,FALSE,Politics
+95,text,CBSE introducing robot teachers in 2025.,FALSE,Politics
+96,text,Every citizen to get a free health insurance card automatically.,FALSE,Health
+97,text,AI-based national ID card to replace Aadhaar by the end of 2025.,FALSE,Politics
+98,link,https://www.bbc.com/culture/article/20251001-12-of-the-best-films-to-watch-this-october,TRUE,Entertainment
+99,link,https://www.cnn.com/2025/10/15/health/flu-covid-season-vaccine-tips-wellness,TRUE,Health
+100,link,https://www.cnn.com/2025/10/31/us/video/ac360foremannasakardashian,FALSE,Politics
+101,link,https://www.cnn.com/2025/10/31/politics/senate-filibuster-trump-republicans,TRUE,Politics
+102,link,https://www.espn.com/espn/betting/story/_/id/46733635/sports-betting-2025-sports-equinox-nfl-nba-mlb-nhl,TRUE,Sports
+103,link,https://www.cnn.com/entertainment/live-news/sean-diddy-combs-sentencing-10-03-25,TRUE,Entertainment
+104,link,https://www.factcheck.org/2024/01/scicheck-viral-posts-misuse-rat-study-to-make-unfounded-claims-about-covid-19-vaccines-and-autism/,FALSE,Health
+105,link,https://www.cnn.com/2025/10/30/health/listeria-outbreak-prepared-meals,TRUE,Health
+106,link,https://variety.com/lists/best-movies-streaming-october-2025/,TRUE,Entertainment
+107,link,https://www.cnn.com/2025/10/30/health/happiness-threshold-chronic-disease-death-wellness,TRUE,Health
+108,link,http://www.espn.com/espn/latestnews,TRUE,Sports
+109,link,https://www.cnn.com/politics/live-news/trump-government-shutdown-snap-benefits-10-31-25,TRUE,Politics
+110,link,https://www.bbc.com/culture/article/20251001-12-of-the-best-films-to-watch-this-october,TRUE,Entertainment
+111,link,https://www.factcheck.org/2024/06/israel-will-participate-in-olympic-games-in-paris-contrary-to-threads-post/,FALSE,Politics
+112,link,https://premierchristian.news/us/news/article/ai-create-ed-sheeran-worship-song,FALSE,Entertainment
+113,link,https://www.cnn.com/2025/10/29/politics/democratic-senators-us-military-strikes-briefing,TRUE,Politics
+114,link,https://www.sbs.com.au/news/article/opposition-says-hundreds-killed-in-tanzania-election-protests/mhee0bnr3,TRUE,Politics
+115,link,https://arab.news/8u3b9,FALSE,Politics
+116,link,https://www.nytimes.com/2025/10/17/health/mpox-california-los-angeles-county.html,FALSE,Health
+117,link,https://edition.cnn.com/politics/live-news/trump-south-korea-china-xi-government-shutdown-10-29-25,TRUE,Politics
+118,link,https://www.factcheck.org/2024/01/post-misrepresents-nfl-response-to-oct-7-attack-on-israel/,FALSE,Sports
+119,link,https://www.cnn.com/2025/10/31/world/video/prince-andrew-trending-cli-hrzn,FALSE,Politics
+120,link,https://www.nytimes.com/2025/10/27/health/cdc-kennedy.html,TRUE,Health
+121,link,http://www.espn.com/ncf/recap?gameId=401767555,TRUE,Sports
+122,link,https://www.factcheck.org/2023/01/scicheck-magic-johnson-did-not-contract-hiv-from-a-vaccine-contrary-to-online-claim/,FALSE,Health
+123,link,https://www.cnn.com/2025/10/31/health/blood-pressure-medicine-recall-cancer,TRUE,Health
+124,link,https://www.bbc.com/news/articles/c4gpwn5v072o,TRUE,Politics
+125,link,https://www.nytimes.com/athletic/6764714/2025/10/31/connections-sports-edition-hints-for-oct-31-2025/,TRUE,Sports
+126,link,https://www.nytimes.com/athletic/6720263/2025/10/16/this-week-in-sports-trivia-october-16-2025/,TRUE,Sports
+127,link,https://www.cnn.com/2025/10/31/africa/tanzania-opposition-dispute-election-intl,TRUE,Politics
+128,link,https://www.cnn.com/2025/10/28/entertainment/video/netflix-pentagon-house-dynamite-streaming-controversy-jake-tapper-lead,TRUE,Entertainment
+129,link,https://www.factcheck.org/2025/10/vaccine-advisory-committee-members-mislead-about-covid-19-vaccination-during-pregnancy/,FALSE,Health
+130,link,https://www.nytimes.com/athletic/live-blogs/dodgers-vs-blue-jays-live-updates-mlb-world-series-game-6-score/ZbIYplFzt5Wi/,TRUE,Sports
+131,link,https://www.cnn.com/politics/live-news/trump-government-shutdown-news-10-30-25,TRUE,Politics
+132,link,https://www.factcheck.org/2023/12/fake-story-about-trans-athlete-spreads-online/,FALSE,Politics
+133,link,https://www.context.news/ai/deep-love-or-deepfake-dating-in-the-time-of-ai,FALSE,Technology
+134,img,./images/cancer.jpg,UNVERIFIABLE,Politics
+135,img,./images/food_causes_cancer.jpg,FALSE,Politics
+136,img,./images/kurnool.jpg,FALSE,Politics
+137,img,./images/modi_bows.jpg,FALSE,Politics
+138,img,./images/modi_love.jpg,FALSE,Politics
+139,img,./images/nehru-DG.avif,FALSE,Politics
+140,img,./images/rahul_pak.jpg,FALSE,Politics
+141,img,./images/baseball.png,TRUE,Politics
+142,img,./images/no_depress.png,FALSE,Politics
+143,img,./images/stocks.png,FALSE,Politics
+144,img,./images/superior.jpg,FALSE,Politics
+145,img,./images/Tmobile.jpg,FALSE,Politics
+146,img,./images/ufo.jpg,FALSE,Politics
+147,img,./images/vaccine.jpg,TRUE,Health
+148,img,./images/will_smith.jpg,TRUE,Politics
+149,img,./images/woman_cricket.webp,TRUE,Sports
+150,img,./images/squad.webp,TRUE,Politics
+151,img,./images/retire.jpg,TRUE,Politics
+152,img,./images/trophy.jpg,TRUE,Politics
+153,img,./images/xi_ping,TRUE,Politics
+154,img,./images/drugs.jpg,UNVERIFIABLE,Politics
+155,img,./images/diddy.jpg,FALSE,Politics
+156,img,./images/free_money.jpg,FALSE,Economy
+157,img,./images/floydd.jpg,TRUE,Politics
+158,img,./images/kichidi.jpg,FALSE,Politics
+159,img,./images/gpt.jpg,TRUE,Technology
+160,img,./images/google.jpg,FALSE,Technology
+161,vid,./vids/cricket_real.mp4,TRUE,Sports
+162,vid,./vids/GUKESH.mp4,FALSE,Politics
+163,vid,./vids/mars.mp4,FALSE,Politics
+164,vid,./vids/modi_trump_real.mp4,TRUE,Politics
+165,vid,./vids/Neil.mp4,FALSE,Politics
+166,vid,./vids/osama.mp4,FALSE,Politics
+167,vid,./vids/Rahul.mp4,TRUE,Politics
+168,vid,./vids/tom.mp4,FALSE,Politics
+169,vid,./vids/ufo.mp4,FALSE,Politics
