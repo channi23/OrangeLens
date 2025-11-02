@@ -181,6 +181,19 @@ curl -H "Authorization: Bearer test-key" \
      http://localhost:8080/v1/verify
 ```
 
+## 📈 Benchmark Snapshot (Nov 2025)
+
+We run an internal regression suite against the curated dataset in `tests/misinformation_final.csv` (texts, images, links).  
+The latest run produced:
+
+- **Overall accuracy:** **47.50 %** (text-only: higher; media verification currently lags)  
+- **Plot:**  
+  ![TruthLens accuracy breakdown](tests/truthlens_accuracy_plot.png)
+
+The raw evaluation output lives in `tests/truthlens_results.csv`, which captures every claim, the expected label, the API verdict, and confidence scores. We keep these artifacts in the repo so testers can spot regressions across builds.
+
+> **Honest status:** These are early numbers. We’re actively refining prompts, evidence retrieval, and media handling (especially video) to push accuracy well above 75 %. Expect rapid iterations and model fine-tuning over the next releases.
+
 ## 🔒 Security
 - **API Keys**: Bearer token authentication
 - **Service Accounts**: IAM-based permissions
