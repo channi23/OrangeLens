@@ -2,6 +2,8 @@ import os
 import json
 import logging
 import asyncio
+import imghdr
+import mimetypes
 from datetime import datetime, timedelta
 import random
 from typing import Dict, Any, Optional, List
@@ -14,7 +16,7 @@ from google.cloud import bigquery
 from google.cloud import secretmanager
 from google.auth.exceptions import DefaultCredentialsError
 from vertexai.preview.generative_models import GenerativeModel, Part
-from google.api_core.exceptions import InvalidArgument
+from google.api_core.exceptions import InvalidArgument, ResourceExhausted
 import vertexai
 import requests
 import hashlib
@@ -39,6 +41,33 @@ except ImportError:
 import pytesseract
 from urllib.parse import quote
 from concurrent.futures import ThreadPoolExecutor
+# --- Google Vision API import for web entity detection ---
+from google.cloud import vision
+# --- Web Entities Detection Helper ---
+def detect_web_entities(image_bytes: bytes) -> dict:
+    """
+    Use Google Cloud Vision API to detect web entities and best guess label for an image.
+    Returns a dict: { "entities": [ { "description": str, "score": float } ], "best_guess_label": str }
+    """
+    try:
+        client = vision.ImageAnnotatorClient()
+        image = vision.Image(content=image_bytes)
+        response = client.web_detection(image=image)
+        web_detection = response.web_detection
+        entities = []
+        if web_detection.web_entities:
+            for entity in web_detection.web_entities[:5]:
+                entities.append({
+                    "description": entity.description,
+                    "score": entity.score
+                })
+        best_guess_label = ""
+        if web_detection.best_guess_labels:
+            best_guess_label = web_detection.best_guess_labels[0].label
+        return {"entities": entities, "best_guess_label": best_guess_label}
+    except Exception as e:
+        logging.error(f"detect_web_entities failed: {e}")
+        return {"entities": [], "best_guess_label": ""}
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -564,8 +593,8 @@ def _probe_video(temp_path: str) -> Dict[str, Any]:
 
 async def analyze_media_forensics(media_bytes: bytes, mime_type: str) -> Dict[str, Any]:
     """
-    For images: return EXIF and (if available) C2PA info.
-    For videos: return basic probe info and (if possible) first-frame hash.
+    For images: return EXIF and (if available) C2PA info and web entities.
+    For videos: return basic probe info and (if possible) first-frame hash and web entities from mid-frame.
     Also runs a basic DeepFake detection using frame variance for videos.
     """
     mime = (mime_type or "").lower()
@@ -577,13 +606,32 @@ async def analyze_media_forensics(media_bytes: bytes, mime_type: str) -> Dict[st
             result["exif"] = exif
             result["c2pa"] = c2pa_info
             result["sha256"] = _sha256_hex(media_bytes)
+            # --- Web entities detection for images ---
+            try:
+                entities_info = detect_web_entities(media_bytes)
+                result["entities"] = entities_info
+            except Exception as e:
+                logging.error(f"Web entities detection failed (image): {e}")
+                result["entities"] = {"entities": [], "best_guess_label": ""}
         elif mime.startswith("video/"):
             with tempfile.NamedTemporaryFile(suffix=".mp4", delete=True) as tmp:
                 tmp.write(media_bytes or b"")
                 tmp.flush()
                 probe = _probe_video(tmp.name)
                 result["probe"] = probe
+                # Scene-aware extraction + OCR over selected frames
+                try:
+                    scene_pack = extract_scenes_and_ocr(tmp.name, max_frames=12)
+                    result["scenes"] = scene_pack.get("scene_count", 0)
+                    result["ocr_text"] = scene_pack.get("ocr_text", "")
+                except Exception as e:
+                    logging.warning(f"Scene/OCR enrichment failed: {e}")
+                if "scenes" not in result:
+                    result["scenes"] = 0
+                if "ocr_text" not in result:
+                    result["ocr_text"] = ""
                 # Keyframe hash as before
+                keyframe_bytes = None
                 if cv2 is not None and probe.get("available"):
                     try:
                         cap = cv2.VideoCapture(tmp.name)
@@ -597,8 +645,19 @@ async def analyze_media_forensics(media_bytes: bytes, mime_type: str) -> Dict[st
                             if ok2:
                                 b = jpg.tobytes()
                                 result["keyframe_sha256"] = _sha256_hex(b)
+                                keyframe_bytes = b
                     except Exception as e:
                         logging.error(f"Keyframe extraction failed: {e}")
+                # --- Web entities detection for video keyframe ---
+                if keyframe_bytes:
+                    try:
+                        entities_info = detect_web_entities(keyframe_bytes)
+                        result["entities"] = entities_info
+                    except Exception as e:
+                        logging.error(f"Web entities detection failed (video): {e}")
+                        result["entities"] = {"entities": [], "best_guess_label": ""}
+                else:
+                    result["entities"] = {"entities": [], "best_guess_label": ""}
                 # --- DeepFake detection: adaptive frame variance analysis ---
                 deepfake_detection = {
                     "status": "not_run",
@@ -748,6 +807,82 @@ def extract_keyframes_bytes(video_path: str, count: int = 6) -> List[bytes]:
         logging.error(f"extract_keyframes_bytes failed: {e}")
         return frames
 
+def extract_scenes_and_ocr(video_path: str, max_frames: int = 12) -> Dict[str, Any]:
+    """
+    Scene-aware keyframe extraction with adaptive sampling and async OCR for faster video analysis.
+    """
+    result: Dict[str, Any] = {
+        "frames": [],
+        "scene_count": 0,
+        "fps": 0.0,
+        "frame_count": 0,
+        "duration": 0.0,
+        "ocr_text": ""
+    }
+
+    if cv2 is None:
+        logging.warning("OpenCV not available for scene extraction")
+        return result
+
+    try:
+        cap = cv2.VideoCapture(video_path)
+        if not cap.isOpened():
+            logging.warning("Failed to open video for scene extraction")
+            return result
+
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+        fps = float(cap.get(cv2.CAP_PROP_FPS) or 0.0)
+        duration = total_frames / fps if fps else 0.0
+
+        result["fps"] = fps
+        result["frame_count"] = total_frames
+        result["duration"] = duration
+
+        # --- Adaptive frame sampling ---
+        if duration <= 10:
+            target_frames = max(1, int(duration))
+        elif duration <= 30:
+            target_frames = 5
+        else:
+            target_frames = 8
+
+        step = max(1, total_frames // max(target_frames, 1))
+        kept_indices = list(range(0, total_frames, step))[:target_frames]
+        result["scene_count"] = len(kept_indices)
+
+        frames_bytes: List[bytes] = []
+        ocr_chunks: List[str] = []
+
+        for fi in kept_indices:
+            cap.set(cv2.CAP_PROP_POS_FRAMES, fi)
+            ok, frame = cap.read()
+            if not ok:
+                continue
+            ok2, jpg = cv2.imencode(".jpg", frame)
+            if ok2:
+                b = jpg.tobytes()
+                frames_bytes.append(b)
+                if pytesseract:
+                    try:
+                        from PIL import Image as _PILImage
+                        im = _PILImage.fromarray(frame[:, :, ::-1])
+                        im = im.convert("L")
+                        text = pytesseract.image_to_string(im)
+                        text = (text or "").strip()
+                        if text:
+                            ocr_chunks.append(text)
+                    except Exception as ocr_exc:
+                        logging.warning(f"OCR frame failed: {ocr_exc}")
+
+        cap.release()
+        result["frames"] = frames_bytes
+        result["ocr_text"] = " ".join(ocr_chunks)[:2000] if ocr_chunks else ""
+        return result
+
+    except Exception as e:
+        logging.error(f"extract_scenes_and_ocr failed: {e}")
+        return result
+
 # OCR extraction helper
 def extract_text_from_image_bytes(image_bytes: bytes) -> str:
     try:
@@ -800,6 +935,7 @@ async def generate_image_caption(image_bytes: bytes, language: str, image_mime: 
         "en": "Describe the image in one neutral sentence so it can be fact checked.",
         "hi": "तथ्य जांच के लिए छवि का एक निष्पक्ष वाक्य में वर्णन करें।",
         "ta": "தகவலை சரிபார்க்க பயன்படுத்த படத்தை ஒரு குறுகிய நடுநிலை வாக்கியமாக விளக்கவும்.",
+        "te": "వాస్తవ నిర్ధారణ కోసం చిత్రాన్ని ఒక తటస్థ వాక్యంలో వివరించండి.",
     }.get(language, "Describe the image in one neutral sentence so it can be fact checked.")
     try:
         parts = [Part.from_text(caption_prompt)]
@@ -907,22 +1043,45 @@ async def process_verification_request(
     if image_bytes:
         image_refs = await upload_image_to_bucket(image_bytes, image_mime, request_id)
         image_uri = image_refs.get("signed_url") if image_refs else None
-        if not claim_text:
-            # First try OCR extraction
-            ocr_text = extract_text_from_image_bytes(image_bytes)
-            if ocr_text:
-                # Refine with Gemini
-                claim_text = await refine_text_with_gemini(ocr_text, language)
-            else:
-                # Use raw bytes for caption generation (not the URL)
-                caption = await generate_image_caption(image_bytes, language, image_mime)
-                caption = caption.strip()
 
-                if caption:
-                    # Refine the caption into a clearer factual claim
-                    claim_text = await refine_text_with_gemini(caption, language)
-                else:
-                    claim_text = "Image-only verification requested."
+        # --- Always extract visual context (OCR + caption) ---
+        ocr_text = extract_text_from_image_bytes(image_bytes)
+        caption = await generate_image_caption(image_bytes, language, image_mime)
+        caption = caption.strip() if caption else ""
+
+        # --- Combine claim text with visual description ---
+        if not text:
+            # If only image is provided, use extracted visual text or caption as claim
+            claim_text = caption or ocr_text or "Image-only verification requested."
+        else:
+            # If text is provided, fuse both for better alignment
+            visual_hint = caption or ocr_text
+            if visual_hint:
+                claim_text = f"{text}. The image shows: {visual_hint}"
+            else:
+                claim_text = text
+
+        # --- Fuse detected entities from Vision to enhance claim context ---
+        try:
+            entities_info = detect_web_entities(image_bytes)
+            entity_names = [e.get("description") for e in entities_info.get("entities", []) if e.get("score", 0) > 0.5]
+            if entity_names:
+                claim_text += f" The image appears to show {', '.join(entity_names)}."
+                logging.info(f"Fused Vision entities into claim: {entity_names}")
+        except Exception as e:
+            logging.error(f"Vision entity fusion failed: {e}")
+
+        # --- Heuristic: Verify dialogue authenticity if OCR text contains quotes or names ---
+        try:
+            if image_bytes and ocr_text:
+                # Check for presence of any quoted text and entity names
+                has_quotes = '"' in ocr_text or "'" in ocr_text or "“" in ocr_text or "”" in ocr_text
+                has_names = any(name.lower() in ocr_text.lower() for name in entity_names)
+                if has_quotes and has_names:
+                    claim_text += " Verify if the dialogues or text attributed to these individuals are genuine or fabricated."
+                    logging.info("Added heuristic for dialogue authenticity verification.")
+        except Exception as e:
+            logging.error(f"Dialogue authenticity heuristic failed: {e}")
 
     if not claim_text:
         raise HTTPException(status_code=400, detail="Unable to determine claim text from request")
@@ -939,6 +1098,27 @@ async def process_verification_request(
             "url": item.get("url", ""),
             "source": item.get("source") or item.get("publisher", ""),
         })
+
+    # --- Pre-enrich evidence for image cases using Serper before Gemini ---
+    if image_bytes and image_mime.lower().startswith("image/"):
+        try:
+            logging.info("Pre-enriching with Serper news before Gemini verification (image-only or image+text)...")
+            serper_query = text or await generate_image_caption(image_bytes, language, image_mime)
+            if serper_query:
+                serper_citations = await search_news_fallback(serper_query, language)
+                if serper_citations:
+                    for item in serper_citations:
+                        evidence_entries.append({
+                            "title": item.get("title", ""),
+                            "snippet": item.get("snippet", ""),
+                            "url": item.get("url", ""),
+                            "source": item.get("source", "")
+                        })
+                    logging.info(f"✅ Pre-fused {len(serper_citations)} Serper news entries for image verification.")
+                else:
+                    logging.info("No Serper results found during pre-enrichment for image verification.")
+        except Exception as e:
+            logging.warning(f"⚠️ Pre-Gemini Serper enrichment failed: {e}")
 
     citation_candidates: List[Dict[str, Any]] = []
     for item in evidence_entries:
@@ -964,6 +1144,25 @@ async def process_verification_request(
                 "rating": review.get("textualRating", ""),
             })
 
+    video_ctx = None
+    if image_bytes and image_mime.lower().startswith("video/"):
+        try:
+            forensic_pack = await analyze_media_forensics(image_bytes, image_mime)
+            ocr_text_v = forensic_pack.get("ocr_text", "")
+            probe_v = forensic_pack.get("probe") or {}
+            deep_v = forensic_pack.get("deepfake_detection") or {}
+            video_ctx = {
+                "fps": probe_v.get("fps", 0.0),
+                "frame_count": probe_v.get("frame_count", 0),
+                "duration": probe_v.get("duration_sec", 0.0),
+                "scenes": forensic_pack.get("scenes", 0),
+                "ocr_text": ocr_text_v,
+                "deepfake_status": deep_v.get("status", "unknown"),
+                "deepfake_confidence": deep_v.get("confidence", 0.0),
+            }
+        except Exception as e:
+            logging.warning(f"Video forensic enrichment failed: {e}")
+
     gemini_result = await verify_with_gemini(
         claim_text,
         language,
@@ -971,39 +1170,10 @@ async def process_verification_request(
         normalized_fact_checks,
         image_bytes=image_bytes,
         image_mime=image_mime,
+        video_context=video_ctx,
     )
 
-    # --- Enrich image verification with Serper (forced for all image cases) ---
-    if image_bytes:
-        try:
-            logging.info("Running Serper enrichment for image verification (forced for all image cases)...")
-            serper_query = claim_text or await generate_image_caption(image_bytes, language, image_mime)
-            if serper_query:
-                serper_citations = await search_news_fallback(serper_query, language)
-                if serper_citations:
-                    existing_citations = gemini_result.get("citations", [])
-                    merged = existing_citations + serper_citations
-                    gemini_result["citations"] = merged[:10]
-                    logging.info(f"✅ Added {len(serper_citations)} Serper citations to image verification.")
-                else:
-                    logging.info("No Serper results for image verification query.")
-            else:
-                logging.info("Skipped Serper enrichment — no caption or text available for query.")
-        except Exception as e:
-            logging.warning(f"⚠️ Serper enrichment failed for image verification: {e}")
-
-    # --- Add Serper enrichment for videos as well ---
-    if image_bytes and image_mime.lower().startswith("video/"):
-        try:
-            logging.info("Running Serper enrichment for video verification...")
-            serper_query = text or "Verify authenticity of this video"
-            serper_citations = await search_news_fallback(serper_query, language)
-            if serper_citations:
-                existing_citations = gemini_result.get("citations", [])
-                gemini_result["citations"] = (existing_citations + serper_citations)[:10]
-                logging.info(f"✅ Added {len(serper_citations)} Serper citations to video verification.")
-        except Exception as e:
-            logging.warning(f"⚠️ Serper enrichment failed for video verification: {e}")
+    # (Serper enrichment for image cases has been moved up to pre-Gemini. Post-Gemini block removed.)
 
     # Manipulation detection using Gemini for claims
     manipulation_technique = None
@@ -1509,14 +1679,15 @@ async def key_usage(credentials: HTTPAuthorizationCredentials = Depends(security
 
 # Language detection
 def detect_language(text: str) -> str:
-    """Simple language detection"""
-    # Basic language detection - can be enhanced with Google Translate API
-    if any(char in text for char in "अआइईउऊऋएऐओऔकखगघङचछजझञटठडढणतथदधनपफबभमयरलवशषसह"):
+    """Simple language detection."""
+    if any(char in text for char in "అఆఇఈఉఊఋఎఏఐఒఓఔకఖగఘఙచఛజఝఞటఠడఢణతథదధనపఫబభమయరలవశషసహ"):
+        return "te"  # Telugu
+    elif any(char in text for char in "अआइईउऊऋएऐओऔकखगघङचछजझञटठडढणतथदधनपफबभमयरलवशषसह"):
         return "hi"  # Hindi
     elif any(char in text for char in "அஆஇஈஉஊஎஏஐஒஓஔகஙசஜஞடணதநபமயரலவஶஷஸஹ"):
         return "ta"  # Tamil
     else:
-        return "en"  # English
+        return "en"
 
 # Gemini AI integration
 # Allow overriding the model via environment variable
@@ -1552,6 +1723,41 @@ try:
 except Exception:
     pass
 
+
+async def _generate_with_retry(
+    model: GenerativeModel,
+    generation_parts: List[Part],
+    max_attempts: int = 3
+) -> Any:
+    """
+    Call Gemini with exponential backoff to handle rate limiting gracefully.
+    """
+    for attempt in range(1, max_attempts + 1):
+        try:
+            return model.generate_content(generation_parts)
+        except ResourceExhausted as exc:
+            if attempt == max_attempts:
+                logging.error("Gemini rate limit exhausted after %d attempts: %s", attempt, exc)
+                raise HTTPException(
+                    status_code=503,
+                    detail="AI verification temporarily rate-limited. Please retry shortly."
+                )
+            sleep_seconds = min(20, 2 ** attempt)
+            logging.warning(
+                "Gemini rate limit hit (attempt %d/%d). Retrying in %s seconds.",
+                attempt,
+                max_attempts,
+                sleep_seconds,
+            )
+            await asyncio.sleep(sleep_seconds)
+        except InvalidArgument as exc:
+            logging.error("Gemini verification rejected input: %s", exc)
+            raise HTTPException(status_code=400, detail="Gemini could not process the supplied media.")
+        except Exception as exc:
+            logging.exception("Gemini verification failed", exc_info=True)
+            raise HTTPException(status_code=500, detail=f"AI verification failed: {str(exc)}")
+
+
 async def verify_with_gemini(
     claim_text: str,
     language: str,
@@ -1559,6 +1765,7 @@ async def verify_with_gemini(
     fact_check_results: List[Dict[str, Any]],
     image_bytes: Optional[bytes] = None,
     image_mime: str = "image/jpeg",
+    video_context: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Verify claim using Vertex Gemini with optional evidence and image context."""
     try:
@@ -1572,15 +1779,52 @@ async def verify_with_gemini(
             for res in fact_check_results[:5]
         ]) or "No fact check reviews found."
 
+        video_block = ""
+        if video_context:
+            vc = video_context
+            video_block = f"""
+Video context:
+- Duration: {vc.get('duration', 0.0):.2f}s, FPS: {vc.get('fps', 0)}, Frames: {vc.get('frame_count', 0)}, Scenes: {vc.get('scenes', 0)}
+- OCR text extracted (if any): "{(vc.get('ocr_text') or '')[:500]}"
+- DeepFake detection: {vc.get('deepfake_status','unknown')} ({float(vc.get('deepfake_confidence',0.0))*100:.1f}% confidence)
+"""
+
+        if language == "hi":
+            prompt_intro = """
+आप TruthLens हैं, एक साक्ष्य-आधारित तथ्य-जांच सहायक।
+आपका कार्य: दावे, साक्ष्य, और छवि/वीडियो की जाँच करना।
+कृपया केवल हिंदी में उत्तर दें।
+""".strip()
+        elif language == "ta":
+            prompt_intro = """
+நீங்கள் TruthLens என்ற ஆதார அடிப்படையிலான உண்மைச் சரிபார்ப்பாளர்.
+உங்கள் பணி: குற்றச்சாட்டு, ஆதாரம், மற்றும் படங்கள்/வீடியோக்களை ஆய்வு செய்தல்.
+தயவுசெய்து தமிழ் மொழியிலேயே பதிலளிக்கவும்.
+""".strip()
+        elif language == "te":
+            prompt_intro = """
+మీరు TruthLens అనే సాక్ష్య ఆధారిత వాస్తవ తనిఖీ సహాయకుడు.
+మీ పని: దావా, సాక్ష్యం మరియు చిత్రాలు/వీడియోలను విశ్లేషించడం.
+దయచేసి సమాధానం తెలుగులో మాత్రమే ఇవ్వండి.
+""".strip()
+        else:
+            prompt_intro = """
+You are TruthLens, an evidence-driven fact-checking assistant designed to analyze both text and visual information.
+Please respond only in English.
+""".strip()
+
         current_year = datetime.utcnow().year
         prompt = f"""
-You are TruthLens, an evidence-driven fact-checking assistant designed to analyze both text and visual information.
+{prompt_intro}
 
 Your task:
-- Examine the claim, the evidence, and (if provided) the image.
-- If an image is included, prioritize its visual context and verify whether the image supports, contradicts, or misleads regarding the claim.
+- Examine the claim, the evidence, and (if provided) the image/video.
+- If an image is included, interpret its visual context in relation to the claim. 
+- If the image plausibly supports the claim without direct contradiction or deceptive alteration, classify it as "true".
+- Only classify as "misleading" if clear evidence shows that the image content contradicts or misrepresents the claim.
+- If a video is included, use scene-aware understanding, visible text (OCR), and any detected anomalies to inform the decision.
 - Respond ONLY in JSON matching this schema:
-{{
+{{ 
   "verdict": "true | false | misleading | unverifiable | unknown",
   "confidence": number,
   "explanation": string,
@@ -1598,10 +1842,10 @@ Evidence:
 Fact check summaries:
 {fact_check_section}
 
-Image context:
+Image/Video context:
 - If an image is attached, interpret its visual elements (text, symbols, people, or scenes) in relation to the claim.
-- Determine if the image is authentic, unrelated, or possibly manipulated.
-- If no image is provided, ignore this instruction.
+- If a video is attached, consider motion, scene transitions, and any superimposed text for authenticity and context.
+{video_block}
 
 Rules:
 - If the claim references a future year beyond {current_year}, set verdict to "unverifiable" with low confidence and explain why.
@@ -1616,32 +1860,92 @@ Rules:
             with tempfile.NamedTemporaryFile(suffix=".mp4", delete=True) as tmp:
                 tmp.write(image_bytes)
                 tmp.flush()
-                frames = extract_keyframes_bytes(tmp.name)
+                if cv2 is not None:
+                    cap_tmp = cv2.VideoCapture(tmp.name)
+                    duration = 0.0
+                    if cap_tmp.isOpened():
+                        fps_tmp = cap_tmp.get(cv2.CAP_PROP_FPS) or 0.0
+                        frame_count_tmp = cap_tmp.get(cv2.CAP_PROP_FRAME_COUNT) or 0.0
+                        if fps_tmp:
+                            duration = frame_count_tmp / fps_tmp
+                    cap_tmp.release()
+                    if duration > 20:
+                        return {
+                            "verdict": "unverifiable",
+                            "confidence": 0.2,
+                            "explanation": "Video too long for real-time verification.",
+                            "key_facts": [],
+                            "citations": [],
+                            "fact_check_results": [],
+                            "timestamp": datetime.utcnow().isoformat()
+                        }
+                scene_pack = extract_scenes_and_ocr(tmp.name, max_frames=12)
+                frames = scene_pack.get("frames", [])
+                frames = frames[:5]
+                vc = {
+                    "fps": scene_pack.get("fps", 0.0),
+                    "frame_count": scene_pack.get("frame_count", 0),
+                    "duration": scene_pack.get("duration", 0.0),
+                    "scenes": scene_pack.get("scene_count", 0),
+                    "ocr_text": scene_pack.get("ocr_text", ""),
+                    "deepfake_status": (video_context or {}).get("deepfake_status", "unknown"),
+                    "deepfake_confidence": (video_context or {}).get("deepfake_confidence", 0.0),
+                }
+                video_block = f"""
+Video context:
+- Duration: {vc.get('duration', 0.0):.2f}s, FPS: {vc.get('fps', 0)}, Frames: {vc.get('frame_count', 0)}, Scenes: {vc.get('scenes', 0)}
+- OCR text extracted (if any): "{(vc.get('ocr_text') or '')[:500]}"
+- DeepFake detection: {vc.get('deepfake_status','unknown')} ({float(vc.get('deepfake_confidence',0.0))*100:.1f}% confidence)
+"""
+                prompt = f"""
+{prompt_intro}
+
+Your task:
+- Examine the claim, the evidence, and (if provided) the image/video.
+- If an image is included, interpret its visual context in relation to the claim. 
+- If the image plausibly supports the claim without direct contradiction or deceptive alteration, classify it as "true".
+- Only classify as "misleading" if clear evidence shows that the image content contradicts or misrepresents the claim.
+- If a video is included, use scene-aware understanding, visible text (OCR), and any detected anomalies to inform the decision.
+- Respond ONLY in JSON matching this schema:
+{{ 
+  "verdict": "true | false | misleading | unverifiable | unknown",
+  "confidence": number,
+  "explanation": string,
+  "key_facts": [string],
+  "citations": [string],
+  "fact_check_results": [{{"claim": string, "reviewer": string, "url": string, "rating": string}}],
+  "timestamp": string (ISO8601)
+}}
+
+Claim: "{claim_text}"
+
+Evidence:
+{evidence_section}
+
+Fact check summaries:
+{fact_check_section}
+
+Image/Video context:
+- If an image is attached, interpret its visual elements (text, symbols, people, or scenes) in relation to the claim.
+- If a video is attached, consider motion, scene transitions, and any superimposed text for authenticity and context.
+{video_block}
+
+Rules:
+- If the claim references a future year beyond {current_year}, set verdict to "unverifiable" with low confidence and explain why.
+- If no direct evidence exists, reason using historical and factual context.
+- Keep explanations concise and directly related to the claim and any attached media.
+"""
                 generation_parts = [Part.from_text(prompt)]
                 for frame_bytes in frames:
                     generation_parts.append(Part.from_data(data=frame_bytes, mime_type="image/jpeg"))
-                logging.info(f"✅ Added {len(frames)} adaptively sampled keyframes for Gemini multimodal analysis.")
-                try:
-                    response = model.generate_content(generation_parts)
-                except InvalidArgument as exc:
-                    logging.error(f"Gemini verification rejected input: {exc}")
-                    raise HTTPException(status_code=400, detail="Gemini could not process the supplied media.")
-                except Exception as exc:
-                    logging.exception("Gemini verification failed", exc_info=True)
-                    raise HTTPException(status_code=500, detail=f"AI verification failed: {str(exc)}")
+                logging.info(f"✅ Added {len(frames)} scene-aware keyframes for Gemini multimodal analysis.")
+                response = await _generate_with_retry(model, generation_parts)
         else:
             generation_parts = [Part.from_text(prompt)]
             if image_bytes:
                 generation_parts.append(Part.from_data(data=image_bytes, mime_type=image_mime or "image/jpeg"))
             logging.error(f"Gemini input parts: {[type(p).__name__ for p in generation_parts]}")
-            try:
-                response = model.generate_content(generation_parts)
-            except InvalidArgument as exc:
-                logging.error(f"Gemini verification rejected input: {exc}")
-                raise HTTPException(status_code=400, detail="Gemini could not process the supplied media.")
-            except Exception as exc:
-                logging.exception("Gemini verification failed", exc_info=True)
-                raise HTTPException(status_code=500, detail=f"AI verification failed: {str(exc)}")
+            response = await _generate_with_retry(model, generation_parts)
 
         model_text = getattr(response, "text", "")
         parsed = _parse_json_from_text(model_text)
@@ -2064,7 +2368,22 @@ async def verify_media(
             raise HTTPException(status_code=400, detail="No media file provided")
 
         media_bytes = await file.read()
-        media_mime = file.content_type or "application/octet-stream"
+        media_mime = (file.content_type or "").lower()
+        filename = (file.filename or "").lower()
+
+        # Heuristic MIME detection (fallback for clients that omit Content-Type)
+        if not media_mime.startswith(("image/", "video/")):
+            guessed, _ = mimetypes.guess_type(filename)
+            if guessed:
+                media_mime = guessed.lower()
+
+        if not media_mime.startswith(("image/", "video/")):
+            image_kind = imghdr.what(None, h=media_bytes)
+            if image_kind:
+                media_mime = f"image/{image_kind}"
+
+        if not media_mime.startswith(("image/", "video/")) and len(media_bytes) >= 12 and media_bytes[4:8] == b"ftyp":
+            media_mime = "video/mp4"
 
         # --- Handle image verification (under 3s target) ---
         if media_mime.startswith("image/"):
@@ -2107,8 +2426,11 @@ async def verify_media(
                     raise HTTPException(status_code=400, detail="No frames could be extracted from the video")
 
         else:
-            raise HTTPException(status_code=400, detail=f"Unsupported media type: {media_mime}")
+            raise HTTPException(status_code=400, detail=f"Unsupported media type: {media_mime or 'unknown'}")
 
+    except HTTPException as exc:
+        logging.error(f"/verify_media HTTP error: {exc.detail}")
+        raise exc
     except Exception as e:
         logging.error(f"/verify_media failed: {e}")
         raise HTTPException(status_code=500, detail=f"Media verification failed: {str(e)}")
@@ -2423,8 +2745,16 @@ async def verify_headline_text(headline: str, lang_hint: str = "en") -> Dict[str
             language = detect_language(headline or "")
         # Retrieve evidence
         bundle = await retrieve_supporting_evidence(headline, language)
-        evidence_entries = bundle.get("evidence", [])
+        citations_raw = bundle.get("citations", [])
         fact_check_raw = bundle.get("fact_check_results", [])
+        evidence_entries: List[Dict[str, Any]] = []
+        for item in citations_raw[:5]:
+            evidence_entries.append({
+                "title": item.get("title", ""),
+                "snippet": item.get("snippet") or item.get("rating", ""),
+                "url": item.get("url", ""),
+                "source": item.get("source") or item.get("publisher", ""),
+            })
         # Normalize fact-checks
         normalized_fact_checks: List[Dict[str, Any]] = []
         for claim in fact_check_raw:
@@ -2446,6 +2776,7 @@ async def verify_headline_text(headline: str, lang_hint: str = "en") -> Dict[str
             fact_check_results=normalized_fact_checks,
             image_bytes=None,
             image_mime="image/jpeg",
+            video_context=None,
         )
         # Normalize citations
         citations: List[Dict[str, Any]] = []
@@ -2598,3 +2929,9 @@ async def set_privacy_mode(privacy: bool = Form(...)):
     global PRIVACY_MODE
     PRIVACY_MODE = bool(privacy)
     return {"privacy_mode": PRIVACY_MODE}
+
+# --- Entry point for Cloud Run ---
+if __name__ == "__main__":
+    import uvicorn
+    port = int(os.environ.get("PORT", 8080))
+    uvicorn.run("main:app", host="0.0.0.0", port=port)
