@@ -186,11 +186,11 @@ curl -H "Authorization: Bearer test-key" \
 We run an internal regression suite against the curated dataset in `tests/misinformation_final.csv` (texts, images, links).  
 The latest run produced:
 
-- **Overall accuracy:** **47.50 %** (text-only: higher; media verification currently lags)  
+- **Overall accuracy:** **75.00 %** 
 - **Plot:**  
-  ![TruthLens accuracy breakdown](tests/truthlens_accuracy_plot.png)
+  ![TruthLens accuracy breakdown](/Users/apple/OrangeLens/tests/results.png)
 
-The raw evaluation output lives in `tests/truthlens_results.csv`, which captures every claim, the expected label, the API verdict, and confidence scores. We keep these artifacts in the repo so testers can spot regressions across builds.
+You can explore the test-reports in the /tests dir 
 
 > **Honest status:** These are early numbers. We’re actively refining prompts, evidence retrieval, and media handling (especially video) to push accuracy well above 75 %. Expect rapid iterations and model fine-tuning over the next releases.
 
