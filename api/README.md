@@ -1,180 +1,179 @@
 # TruthLens API Documentation
 
 ## Overview
-The TruthLens API provides AI-powered fact verification using Google Cloud's Vertex AI Gemini and Google Fact Check API.
+TruthLens is an AI-powered multimedia verification API designed to detect misinformation across **text, images, and videos**.  
+It combines **Google Vertex AI Gemini**, **Google Cloud Vision**, and **Serper Search APIs** for fact extraction, manipulation detection, and authenticity verification.
+
+## Architecture
+- **Backend**: FastAPI + Uvicorn (Python)
+- **Deployment**: Google Cloud Run
+- **Storage & Logs**: Google Cloud Storage + Cloud Logging
+- **ML Stack**: Vertex AI Gemini, Google Vision API
+- **Search Integration**: Serper API (Google Search)
+- **Cache Layer**: Redis / Cloud Memorystore
+- **Database**: Firestore / BigQuery (for metrics and trending tracking)
+- **App Integration**: Android (Jetpack Compose)
+
+---
 
 ## Base URL
-- **Production**: `https://truthlens-api-gateway-{gateway-id}-uc.a.run.app`
+- **Production**: `https://truthlens-api-276376440888.us-central1.run.app`
 - **Development**: `http://localhost:8080`
 
-## Authentication
-All API requests require authentication using a Bearer token in the Authorization header:
+---
 
+## Authentication
+All API requests require a Bearer token:
 ```bash
 Authorization: Bearer your-api-key
 ```
 
+---
+
 ## Endpoints
 
 ### Health Check
-Check if the API is running and healthy.
-
 **GET** `/healthz`
-
-**Response:**
 ```json
 {
   "status": "healthy",
-  "timestamp": "2024-01-01T00:00:00Z"
+  "timestamp": "2025-11-01T00:00:00Z"
 }
 ```
 
+---
+
 ### Verify Claim
-Verify a text claim or image for factual accuracy.
+Verifies text or image-based claims using AI + factual databases.
 
 **POST** `/v1/verify`
 
-**Request Body** (multipart/form-data):
-- `text` (string, required): The claim to verify
-- `mode` (string, optional): Verification mode - "fast" or "deep" (default: "fast")
-- `language` (string, optional): Language code - "en", "hi", "ta", or "auto" (default: "en")
-- `image` (file, optional): Image file to verify
+**Request (multipart/form-data):**
+- `text` *(optional)*: Claim or statement to verify
+- `image` *(optional)*: Image file for forensic + factual verification
+- `language` *(optional)*: Default `"en"`
+- `mode` *(optional)*: `"fast"` (Gemini only) or `"deep"` (Gemini + Serper + Vision)
 
 **Response:**
 ```json
 {
-  "request_id": "uuid-string",
-  "verdict": "true|false|misleading|unverified",
+  "verdict": "true|false|misleading|unverifiable",
   "confidence": 0.95,
-  "explanation": "Detailed explanation of the verdict",
+  "explanation": "Gemini + Serper + Vision reasoning summary",
   "key_facts": ["Fact 1", "Fact 2"],
-  "reasoning": "Step-by-step analysis",
-  "citations": [
-    {
-      "title": "Source Title",
-      "url": "https://example.com",
-      "publisher": "Publisher Name",
-      "rating": "True",
-      "date": "2024-01-01"
+  "citations": [{"title": "Source Title", "url": "https://example.com"}],
+  "manipulation_technique": "deepfake|photoshop|ai-generated|none",
+  "manipulation_explanation": "Detailed forensic analysis",
+  "timestamp": "2025-11-02T09:30:00Z",
+  "metrics": {"latency_ms": 2100, "cost_usd": 0.003}
+}
+```
+
+---
+
+### Verify Media
+Performs **video-level verification** using Gemini + Serper + Vision + Deepfake Forensics.
+
+**POST** `/v1/verify_media`
+
+**Request:**
+- `file` *(required)*: Video file
+- `language`, `mode` *(optional)*
+
+**Response:**
+```json
+{
+  "verdict": "true|false|misleading|unverifiable",
+  "confidence": 0.92,
+  "explanation": "Multiframe forensic analysis summary",
+  "media_forensics": {
+    "fps": 24,
+    "duration_sec": 7.8,
+    "frame_count": 187,
+    "deepfake_detection": {
+      "detected": false,
+      "confidence": 0.0,
+      "explanation": "No deepfake traces found"
     }
-  ],
-  "language": "en",
-  "mode": "fast",
-  "timestamp": "2024-01-01T00:00:00Z",
-  "metrics": {
-    "latency_ms": 1500,
-    "cost_usd": 0.001
-  }
-}
-```
-
-## Verification Modes
-
-### Fast Mode
-- Uses only Vertex AI Gemini
-- Faster response time (~1-2 seconds)
-- Lower cost
-- Good for general fact checking
-
-### Deep Mode
-- Uses Vertex AI Gemini + Google Fact Check API
-- Slower response time (~3-5 seconds)
-- Higher cost
-- More comprehensive verification with citations
-
-## Language Support
-- **English (en)**: Default language
-- **Hindi (hi)**: Hindi language support
-- **Tamil (ta)**: Tamil language support
-- **Auto (auto)**: Automatic language detection
-
-## Error Responses
-
-### 400 Bad Request
-```json
-{
-  "detail": "Invalid request parameters"
-}
-```
-
-### 401 Unauthorized
-```json
-{
-  "detail": "Invalid API key"
-}
-```
-
-### 500 Internal Server Error
-```json
-{
-  "detail": "Verification failed"
-}
-```
-
-## Rate Limits
-- **Free Tier**: 100 requests/minute
-- **Paid Tier**: 1000 requests/minute
-
-## Cost Estimation
-- **Fast Mode**: ~$0.001 per request
-- **Deep Mode**: ~$0.005 per request
-- **Image Processing**: +$0.002 per image
-
-## Examples
-
-### cURL Example
-```bash
-curl -X POST "https://api.truthlens.app/v1/verify" \
-  -H "Authorization: Bearer your-api-key" \
-  -F "text=The Earth is round" \
-  -F "mode=fast" \
-  -F "language=en"
-```
-
-### JavaScript Example
-```javascript
-const formData = new FormData();
-formData.append('text', 'The Earth is round');
-formData.append('mode', 'fast');
-formData.append('language', 'en');
-
-const response = await fetch('https://api.truthlens.app/v1/verify', {
-  method: 'POST',
-  headers: {
-    'Authorization': 'Bearer your-api-key'
   },
-  body: formData
-});
-
-const result = await response.json();
-console.log(result);
-```
-
-### Python Example
-```python
-import requests
-
-url = "https://api.truthlens.app/v1/verify"
-headers = {"Authorization": "Bearer your-api-key"}
-data = {
-    "text": "The Earth is round",
-    "mode": "fast",
-    "language": "en"
+  "citations": [{"title": "CNN", "url": "https://cnn.com"}],
+  "timestamp": "2025-11-02T09:40:00Z"
 }
-
-response = requests.post(url, headers=headers, data=data)
-result = response.json()
-print(result)
 ```
 
-## SDKs
-- **JavaScript/TypeScript**: Available via npm
-- **Python**: Available via pip
-- **Go**: Available via go get
-- **Java**: Available via Maven
+---
 
-## Support
-For API support and questions:
-- **Email**: api-support@truthlens.app
-- **Documentation**: https://docs.truthlens.app
-- **Status Page**: https://status.truthlens.app
+### Feedback
+Stores user feedback for model improvement.
+
+**POST** `/v1/feedback`
+```json
+{
+  "request_id": "uuid",
+  "feedback": "upvote|downvote",
+  "comment": "optional text"
+}
+```
+**Response:**
+```json
+{"message": "Feedback recorded successfully"}
+```
+
+---
+
+## Caching & Trending
+- Responses are cached for repeated requests (up to 24 hours)
+- Trending claims are recorded and retrievable via `/v1/trending`
+
+---
+
+## Verification Pipeline
+
+| Stage | Description |
+|--------|--------------|
+| **1. Input Parsing** | Accepts text/image/video inputs |
+| **2. Gemini Reasoning** | Generates contextual explanation |
+| **3. Serper Search** | Retrieves fact-check sources |
+| **4. Vision Analysis** | Detects visual manipulation, objects, faces, OCR |
+| **5. Deepfake Detector** | Flags suspicious frame-level anomalies |
+| **6. Result Fusion** | Aggregates Gemini + Forensic + Search into unified verdict |
+| **7. Caching & Storage** | Saves to Cloud Memorystore / Firestore |
+
+---
+
+## Example Usage
+
+### cURL
+```bash
+curl -X POST "https://truthlens-api-276376440888.us-central1.run.app/v1/verify" \
+  -H "Authorization: Bearer your-api-key" \
+  -F "text=Is Gukesh the current world chess champion?" \
+  -F "language=en" \
+  -F "mode=fast"
+```
+
+### Video Verification
+```bash
+curl -X POST "https://truthlens-api-276376440888.us-central1.run.app/v1/verify_media" \
+  -H "Authorization: Bearer your-api-key" \
+  -F "file=@sample.mp4;type=video/mp4"
+```
+
+---
+
+## Cost & Performance
+| Mode | Avg Latency | Cost (USD) | Description |
+|------|--------------|-------------|--------------|
+| Fast | ~3s | $0.001 | Gemini-based reasoning |
+| Deep | ~7s | $0.003 | Gemini + Serper + Vision |
+| Media | ~10-20s | $0.005 | Deepfake & frame-level forensics |
+
+---
+
+## Contact
+For API support and technical assistance:
+- **Email**: support@truthlens.app
+- **Docs**: https://docs.truthlens.app
+- **Status**: https://status.truthlens.app
+
+---
