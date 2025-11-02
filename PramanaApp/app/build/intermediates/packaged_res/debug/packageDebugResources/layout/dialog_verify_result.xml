@@ -81,92 +81,122 @@
                 android:layout_marginTop="16dp" />
         </LinearLayout>
 
-        <!-- Results card (hidden until response comes) -->
-        <com.google.android.material.card.MaterialCardView
-            android:id="@+id/resultCard"
+        <ScrollView
+            android:id="@+id/resultScroll"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            app:cardCornerRadius="20dp"
-            app:cardElevation="4dp"
-            android:backgroundTint="@android:color/white"
-            android:visibility="gone">
+            android:fillViewport="true"
+            android:overScrollMode="ifContentScrolls">
 
             <LinearLayout
+                android:id="@+id/resultContainer"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:padding="20dp">
+                android:orientation="vertical">
 
-                <!-- Scrollable text -->
-                <ScrollView
-                    android:layout_width="match_parent"
-                    android:layout_height="0dp"
-                    android:layout_weight="1"
-                    android:maxHeight="400dp"
-                    android:overScrollMode="ifContentScrolls">
-
-                    <TextView
-                        android:id="@+id/resultText"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:text="✨ Verification results will appear here..."
-                        android:textSize="16sp"
-                        android:textColor="@android:color/black"
-                        android:lineSpacingExtra="6dp"
-                        android:autoLink="web"
-                        android:linksClickable="true" />
-                </ScrollView>
-
-                <!-- Buttons fixed at bottom -->
-                <LinearLayout
+                <!-- Results card (hidden until response comes) -->
+                <com.google.android.material.card.MaterialCardView
+                    android:id="@+id/resultCard"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:orientation="vertical"
-                    android:layout_marginTop="16dp">
+                    app:cardCornerRadius="20dp"
+                    app:cardElevation="4dp"
+                    android:backgroundTint="@android:color/white"
+                    android:visibility="gone">
 
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/openAppButton"
-                        style="@style/Widget.MaterialComponents.Button.UnelevatedButton"
+                    <LinearLayout
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:text="Continue in App"
-                        android:textAllCaps="false"
-                        android:textSize="16sp"
-                        android:backgroundTint="@color/purple_500"
-                        android:textColor="@android:color/white"
-                        app:cornerRadius="24dp"
-                        android:elevation="4dp" />
+                        android:orientation="vertical"
+                        android:padding="20dp">
 
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/closeButton"
-                        style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:text="Close"
-                        android:textAllCaps="false"
-                        android:textSize="16sp"
-                        android:layout_marginTop="10dp"
-                        app:cornerRadius="24dp"
-                        android:textColor="@android:color/darker_gray"
-                        app:strokeColor="@android:color/darker_gray"
-                        app:strokeWidth="1dp" />
+                        <!-- Scrollable text -->
+                        <ScrollView
+                            android:layout_width="match_parent"
+                            android:layout_height="0dp"
+                            android:layout_weight="1"
+                            android:maxHeight="400dp"
+                            android:overScrollMode="ifContentScrolls">
 
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/retryButton"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:text="Retry"
-                        android:textAllCaps="false"
-                        android:textSize="16sp"
-                        android:layout_marginTop="10dp"
-                        app:cornerRadius="24dp"
-                        android:backgroundTint="@android:color/holo_orange_dark"
-                        android:textColor="@android:color/white"
-                        android:visibility="gone" />
-                </LinearLayout>
+                            <TextView
+                                android:id="@+id/resultText"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:text="✨ Verification results will appear here..."
+                                android:textSize="16sp"
+                                android:textColor="@android:color/black"
+                                android:lineSpacingExtra="6dp"
+                                android:autoLink="web"
+                                android:linksClickable="true" />
+                        </ScrollView>
+
+                        <!-- Buttons fixed at bottom -->
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:orientation="vertical"
+                            android:layout_marginTop="16dp">
+
+                            <com.google.android.material.button.MaterialButton
+                                android:id="@+id/openAppButton"
+                                style="@style/Widget.MaterialComponents.Button.UnelevatedButton"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:text="Continue in App"
+                                android:textAllCaps="false"
+                                android:textSize="16sp"
+                                android:backgroundTint="@color/purple_500"
+                                android:textColor="@android:color/white"
+                                app:cornerRadius="24dp"
+                                android:elevation="4dp" />
+
+                            <com.google.android.material.button.MaterialButton
+                                android:id="@+id/closeButton"
+                                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:text="Close"
+                                android:textAllCaps="false"
+                                android:textSize="16sp"
+                                android:layout_marginTop="10dp"
+                                app:cornerRadius="24dp"
+                                android:textColor="@android:color/darker_gray"
+                                app:strokeColor="@android:color/darker_gray"
+                                app:strokeWidth="1dp" />
+
+                            <com.google.android.material.button.MaterialButton
+                                android:id="@+id/retryButton"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:text="Retry"
+                                android:textAllCaps="false"
+                                android:textSize="16sp"
+                                android:layout_marginTop="10dp"
+                                app:cornerRadius="24dp"
+                                android:backgroundTint="@android:color/holo_orange_dark"
+                                android:textColor="@android:color/white"
+                                android:visibility="gone" />
+                        </LinearLayout>
+                    </LinearLayout>
+                </com.google.android.material.card.MaterialCardView>
+
             </LinearLayout>
-        </com.google.android.material.card.MaterialCardView>
+        </ScrollView>
     </FrameLayout>
+
+    <View
+        android:id="@+id/scrollIndicator"
+        android:layout_width="match_parent"
+        android:layout_height="2dp"
+        android:background="@color/purple_200"
+        android:visibility="gone"/>
+
+    <View
+        android:id="@+id/scrollGradient"
+        android:layout_width="match_parent"
+        android:layout_height="8dp"
+        android:background="@drawable/scroll_indicator_bg"
+        android:visibility="gone"/>
 
     <!-- Status text -->
     <TextView

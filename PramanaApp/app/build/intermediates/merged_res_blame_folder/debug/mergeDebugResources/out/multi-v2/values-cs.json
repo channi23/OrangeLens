@@ -4,7 +4,24 @@
             "outputFile": "com.example.truthlens.app-mergeDebugResources-66:/values-cs/values-cs.xml",
             "map": [
                 {
-                    "source": "C:\\Users\\vamsh\\.gradle\\caches\\8.13\\transforms\\05549c714c735b2a5a642c15ae6c66c5\\transformed\\material-1.11.0\\res\\values-cs\\values-cs.xml",
+                    "source": "/Users/apple/.gradle/caches/8.13/transforms/2996386ac63297800bf72546ea1f115b/transformed/jetified-ui-release/res/values-cs/values-cs.xml",
+                    "from": {
+                        "startLines": "2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18",
+                        "startColumns": "4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4",
+                        "startOffsets": "105,198,281,375,477,569,647,739,830,911,980,1049,1131,1217,1289,1368,1436",
+                        "endColumns": "92,82,93,101,91,77,91,90,80,68,68,81,85,71,78,67,119",
+                        "endOffsets": "193,276,370,472,564,642,734,825,906,975,1044,1126,1212,1284,1363,1431,1551"
+                    },
+                    "to": {
+                        "startLines": "50,51,52,53,54,58,59,172,173,174,175,177,178,180,182,183,184",
+                        "startColumns": "4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4",
+                        "startOffsets": "4570,4663,4746,4840,4942,5274,5352,15951,16042,16123,16192,16340,16422,16591,16764,16843,16911",
+                        "endColumns": "92,82,93,101,91,77,91,90,80,68,68,81,85,71,78,67,119",
+                        "endOffsets": "4658,4741,4835,4937,5029,5347,5439,16037,16118,16187,16256,16417,16503,16658,16838,16906,17026"
+                    }
+                },
+                {
+                    "source": "/Users/apple/.gradle/caches/8.13/transforms/05549c714c735b2a5a642c15ae6c66c5/transformed/material-1.11.0/res/values-cs/values-cs.xml",
                     "from": {
                         "startLines": "2,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,72,73,74,75",
                         "startColumns": "4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4",
@@ -23,24 +40,7 @@
                     }
                 },
                 {
-                    "source": "C:\\Users\\vamsh\\.gradle\\caches\\8.13\\transforms\\aabdd4120fca231c7e9fd582d6b000de\\transformed\\core-1.13.0\\res\\values-cs\\values-cs.xml",
-                    "from": {
-                        "startLines": "2,3,4,5,6,7,8,9",
-                        "startColumns": "4,4,4,4,4,4,4,4",
-                        "startOffsets": "55,153,255,356,455,560,667,786",
-                        "endColumns": "97,101,100,98,104,106,118,100",
-                        "endOffsets": "148,250,351,450,555,662,781,882"
-                    },
-                    "to": {
-                        "startLines": "40,41,42,43,44,45,46,181",
-                        "startColumns": "4,4,4,4,4,4,4,4",
-                        "startOffsets": "3540,3638,3740,3841,3940,4045,4152,16663",
-                        "endColumns": "97,101,100,98,104,106,118,100",
-                        "endOffsets": "3633,3735,3836,3935,4040,4147,4266,16759"
-                    }
-                },
-                {
-                    "source": "C:\\Users\\vamsh\\.gradle\\caches\\8.13\\transforms\\95f0d72ed61f83021baaf9074e85b6fe\\transformed\\jetified-material3-release\\res\\values-cs\\values-cs.xml",
+                    "source": "/Users/apple/.gradle/caches/8.13/transforms/95f0d72ed61f83021baaf9074e85b6fe/transformed/jetified-material3-release/res/values-cs/values-cs.xml",
                     "from": {
                         "startLines": "2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57",
                         "startColumns": "4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4",
@@ -57,7 +57,24 @@
                     }
                 },
                 {
-                    "source": "C:\\Users\\vamsh\\.gradle\\caches\\8.13\\transforms\\6954c5679726d72a953f6b23cb7e3cc9\\transformed\\appcompat-1.6.1\\res\\values-cs\\values-cs.xml",
+                    "source": "/Users/apple/.gradle/caches/8.13/transforms/aabdd4120fca231c7e9fd582d6b000de/transformed/core-1.13.0/res/values-cs/values-cs.xml",
+                    "from": {
+                        "startLines": "2,3,4,5,6,7,8,9",
+                        "startColumns": "4,4,4,4,4,4,4,4",
+                        "startOffsets": "55,153,255,356,455,560,667,786",
+                        "endColumns": "97,101,100,98,104,106,118,100",
+                        "endOffsets": "148,250,351,450,555,662,781,882"
+                    },
+                    "to": {
+                        "startLines": "40,41,42,43,44,45,46,181",
+                        "startColumns": "4,4,4,4,4,4,4,4",
+                        "startOffsets": "3540,3638,3740,3841,3940,4045,4152,16663",
+                        "endColumns": "97,101,100,98,104,106,118,100",
+                        "endOffsets": "3633,3735,3836,3935,4040,4147,4266,16759"
+                    }
+                },
+                {
+                    "source": "/Users/apple/.gradle/caches/8.13/transforms/6954c5679726d72a953f6b23cb7e3cc9/transformed/appcompat-1.6.1/res/values-cs/values-cs.xml",
                     "from": {
                         "startLines": "2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29",
                         "startColumns": "4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4",
@@ -74,24 +91,7 @@
                     }
                 },
                 {
-                    "source": "C:\\Users\\vamsh\\.gradle\\caches\\8.13\\transforms\\2996386ac63297800bf72546ea1f115b\\transformed\\jetified-ui-release\\res\\values-cs\\values-cs.xml",
-                    "from": {
-                        "startLines": "2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18",
-                        "startColumns": "4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4",
-                        "startOffsets": "105,198,281,375,477,569,647,739,830,911,980,1049,1131,1217,1289,1368,1436",
-                        "endColumns": "92,82,93,101,91,77,91,90,80,68,68,81,85,71,78,67,119",
-                        "endOffsets": "193,276,370,472,564,642,734,825,906,975,1044,1126,1212,1284,1363,1431,1551"
-                    },
-                    "to": {
-                        "startLines": "50,51,52,53,54,58,59,172,173,174,175,177,178,180,182,183,184",
-                        "startColumns": "4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4",
-                        "startOffsets": "4570,4663,4746,4840,4942,5274,5352,15951,16042,16123,16192,16340,16422,16591,16764,16843,16911",
-                        "endColumns": "92,82,93,101,91,77,91,90,80,68,68,81,85,71,78,67,119",
-                        "endOffsets": "4658,4741,4835,4937,5029,5347,5439,16037,16118,16187,16256,16417,16503,16658,16838,16906,17026"
-                    }
-                },
-                {
-                    "source": "C:\\Users\\vamsh\\.gradle\\caches\\8.13\\transforms\\6f03ea0e367e82d083c3fb50526c898f\\transformed\\jetified-foundation-release\\res\\values-cs\\values-cs.xml",
+                    "source": "/Users/apple/.gradle/caches/8.13/transforms/6f03ea0e367e82d083c3fb50526c898f/transformed/jetified-foundation-release/res/values-cs/values-cs.xml",
                     "from": {
                         "startLines": "2,3",
                         "startColumns": "4,4",

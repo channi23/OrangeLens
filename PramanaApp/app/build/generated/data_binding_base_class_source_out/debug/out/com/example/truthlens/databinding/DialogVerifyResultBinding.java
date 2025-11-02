@@ -6,6 +6,7 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
+import android.widget.ScrollView;
 import android.widget.TextView;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
@@ -42,13 +43,25 @@ public final class DialogVerifyResultBinding implements ViewBinding {
   public final MaterialCardView resultCard;
 
   @NonNull
+  public final LinearLayout resultContainer;
+
+  @NonNull
   public final ImageView resultImage;
+
+  @NonNull
+  public final ScrollView resultScroll;
 
   @NonNull
   public final TextView resultText;
 
   @NonNull
   public final MaterialButton retryButton;
+
+  @NonNull
+  public final View scrollGradient;
+
+  @NonNull
+  public final View scrollIndicator;
 
   @NonNull
   public final TextView statusText;
@@ -60,9 +73,10 @@ public final class DialogVerifyResultBinding implements ViewBinding {
       @NonNull MaterialButton closeButton, @NonNull LinearLayout loaderContainer,
       @NonNull TextView loaderStatus, @NonNull LottieAnimationView loaderView,
       @NonNull MaterialButton openAppButton, @NonNull MaterialCardView resultCard,
-      @NonNull ImageView resultImage, @NonNull TextView resultText,
-      @NonNull MaterialButton retryButton, @NonNull TextView statusText,
-      @NonNull TextView verdictPill) {
+      @NonNull LinearLayout resultContainer, @NonNull ImageView resultImage,
+      @NonNull ScrollView resultScroll, @NonNull TextView resultText,
+      @NonNull MaterialButton retryButton, @NonNull View scrollGradient,
+      @NonNull View scrollIndicator, @NonNull TextView statusText, @NonNull TextView verdictPill) {
     this.rootView = rootView;
     this.closeButton = closeButton;
     this.loaderContainer = loaderContainer;
@@ -70,9 +84,13 @@ public final class DialogVerifyResultBinding implements ViewBinding {
     this.loaderView = loaderView;
     this.openAppButton = openAppButton;
     this.resultCard = resultCard;
+    this.resultContainer = resultContainer;
     this.resultImage = resultImage;
+    this.resultScroll = resultScroll;
     this.resultText = resultText;
     this.retryButton = retryButton;
+    this.scrollGradient = scrollGradient;
+    this.scrollIndicator = scrollIndicator;
     this.statusText = statusText;
     this.verdictPill = verdictPill;
   }
@@ -140,9 +158,21 @@ public final class DialogVerifyResultBinding implements ViewBinding {
         break missingId;
       }
 
+      id = R.id.resultContainer;
+      LinearLayout resultContainer = ViewBindings.findChildViewById(rootView, id);
+      if (resultContainer == null) {
+        break missingId;
+      }
+
       id = R.id.resultImage;
       ImageView resultImage = ViewBindings.findChildViewById(rootView, id);
       if (resultImage == null) {
+        break missingId;
+      }
+
+      id = R.id.resultScroll;
+      ScrollView resultScroll = ViewBindings.findChildViewById(rootView, id);
+      if (resultScroll == null) {
         break missingId;
       }
 
@@ -155,6 +185,18 @@ public final class DialogVerifyResultBinding implements ViewBinding {
       id = R.id.retryButton;
       MaterialButton retryButton = ViewBindings.findChildViewById(rootView, id);
       if (retryButton == null) {
+        break missingId;
+      }
+
+      id = R.id.scrollGradient;
+      View scrollGradient = ViewBindings.findChildViewById(rootView, id);
+      if (scrollGradient == null) {
+        break missingId;
+      }
+
+      id = R.id.scrollIndicator;
+      View scrollIndicator = ViewBindings.findChildViewById(rootView, id);
+      if (scrollIndicator == null) {
         break missingId;
       }
 
@@ -171,8 +213,9 @@ public final class DialogVerifyResultBinding implements ViewBinding {
       }
 
       return new DialogVerifyResultBinding((LinearLayout) rootView, closeButton, loaderContainer,
-          loaderStatus, loaderView, openAppButton, resultCard, resultImage, resultText, retryButton,
-          statusText, verdictPill);
+          loaderStatus, loaderView, openAppButton, resultCard, resultContainer, resultImage,
+          resultScroll, resultText, retryButton, scrollGradient, scrollIndicator, statusText,
+          verdictPill);
     }
     String missingId = rootView.getResources().getResourceName(id);
     throw new NullPointerException("Missing required view with ID: ".concat(missingId));

@@ -4,7 +4,7 @@
             "outputFile": "com.example.truthlens.app-mergeDebugResources-66:/values-v17/values-v17.xml",
             "map": [
                 {
-                    "source": "C:\\Users\\vamsh\\.gradle\\caches\\8.13\\transforms\\6954c5679726d72a953f6b23cb7e3cc9\\transformed\\appcompat-1.6.1\\res\\values-v17\\values-v17.xml",
+                    "source": "/Users/apple/.gradle/caches/8.13/transforms/6954c5679726d72a953f6b23cb7e3cc9/transformed/appcompat-1.6.1/res/values-v17/values-v17.xml",
                     "from": {
                         "startLines": "2,5,9,12,15,18,22,25,29,33,37,40,43,46,50,53,57",
                         "startColumns": "4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4",

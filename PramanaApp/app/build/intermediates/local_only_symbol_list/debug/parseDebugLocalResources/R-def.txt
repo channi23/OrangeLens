@@ -5,12 +5,14 @@ anim slide_down
 anim slide_up
 color black
 color ic_launcher_background
+color purple_200
 color purple_500
 color purple_700
 color teal_200
 color teal_700
 color white
 drawable glass_card_bg
+drawable ic_arrow_down_24
 drawable pill_false
 drawable pill_misleading
 drawable pill_neutral
@@ -18,6 +20,8 @@ drawable pill_true
 drawable pill_unknown
 drawable pramana_logo_black
 drawable rounded_bg_light
+drawable scroll_fade_bottom
+drawable scroll_indicator_bg
 id closeButton
 id confidenceBar
 id imagePreview
@@ -28,9 +32,13 @@ id loaderStatus
 id loaderView
 id openAppButton
 id resultCard
+id resultContainer
 id resultImage
+id resultScroll
 id resultText
 id retryButton
+id scrollGradient
+id scrollIndicator
 id statusText
 id titleText
 id uploadImageButton

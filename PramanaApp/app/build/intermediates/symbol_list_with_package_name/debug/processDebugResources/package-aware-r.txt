@@ -2125,6 +2125,7 @@ color primary_text_default_material_dark
 color primary_text_default_material_light
 color primary_text_disabled_material_dark
 color primary_text_disabled_material_light
+color purple_200
 color purple_500
 color purple_700
 color ripple_material_dark
@@ -3038,6 +3039,7 @@ drawable design_password_eye
 drawable design_snackbar_background
 drawable glass_card_bg
 drawable ic_arrow_back_black_24
+drawable ic_arrow_down_24
 drawable ic_call_answer
 drawable ic_call_answer_low
 drawable ic_call_answer_video
@@ -3134,6 +3136,8 @@ drawable pill_true
 drawable pill_unknown
 drawable pramana_logo_black
 drawable rounded_bg_light
+drawable scroll_fade_bottom
+drawable scroll_indicator_bg
 drawable test_level_drawable
 drawable tooltip_frame_dark
 drawable tooltip_frame_light
@@ -3521,7 +3525,9 @@ id rectangles
 id report_drawn
 id restart
 id resultCard
+id resultContainer
 id resultImage
+id resultScroll
 id resultText
 id retryButton
 id reverse
@@ -3538,6 +3544,8 @@ id sawtooth
 id scale
 id screen
 id scroll
+id scrollGradient
+id scrollIndicator
 id scrollIndicatorDown
 id scrollIndicatorUp
 id scrollView

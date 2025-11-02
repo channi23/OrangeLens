@@ -1,11 +1,15 @@
 [
     {
-        "merged": "com.example.truthlens.app-mergeDebugResources-67:/layout/activity_verify.xml",
-        "source": "com.example.truthlens.app-main-70:/layout/activity_verify.xml"
+        "merged": "/Users/apple/.gradle/daemon/8.13/com.example.truthlens.app-mergeDebugResources-67:/layout/activity_share_receiver.xml",
+        "source": "/Users/apple/.gradle/daemon/8.13/com.example.truthlens.app-main-70:/layout/activity_share_receiver.xml"
     },
     {
-        "merged": "com.example.truthlens.app-mergeDebugResources-67:/layout/activity_share_receiver.xml",
-        "source": "com.example.truthlens.app-main-70:/layout/activity_share_receiver.xml"
+        "merged": "/Users/apple/.gradle/daemon/8.13/com.example.truthlens.app-mergeDebugResources-67:/layout/activity_verify.xml",
+        "source": "/Users/apple/.gradle/daemon/8.13/com.example.truthlens.app-main-70:/layout/activity_verify.xml"
+    },
+    {
+        "merged": "/Users/apple/.gradle/daemon/8.13/com.example.truthlens.app-mergeDebugResources-67:/layout/dialog_verify_result.xml",
+        "source": "/Users/apple/.gradle/daemon/8.13/com.example.truthlens.app-main-70:/layout/dialog_verify_result.xml"
     },
     {
         "merged": "com.example.truthlens.app-mergeDebugResources-67:/layout/dialog_verify_result.xml",
