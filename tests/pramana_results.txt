@@ -1,0 +1,19 @@
+=== PRAMANA MODEL VERIFICATION REPORT ===
+
+Total verified entries: 160
+Model Verification Accuracy: 0.75
+
+Confusion Matrix:
+              Pred False  Pred True
+Actual False         103          6
+Actual True           34         17
+
+Classification Report:
+              precision    recall  f1-score   support
+
+       False       0.75      0.94      0.84       109
+        True       0.74      0.33      0.46        51
+
+    accuracy                           0.75       160
+   macro avg       0.75      0.64      0.65       160
+weighted avg       0.75      0.75      0.72       160
