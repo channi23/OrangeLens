@@ -188,7 +188,7 @@ The latest run produced:
 
 - **Overall accuracy:** **75.00 %** 
 - **Plot:**  
-  ![TruthLens accuracy breakdown](/Users/apple/OrangeLens/tests/results.png)
+  ![TruthLens accuracy breakdown](tests/results.png)
 
 You can explore the test-reports in the /tests dir 
 
