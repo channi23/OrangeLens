@@ -16,6 +16,20 @@ note: while downloading don't scan the app , it may stop the installation
 One-tap fact verification from any mobile app via the system Share sheet enabling fast, reliable checks with minimal effort. Backed by Retrieval-Augmented Generation (RAG) for contextual accuracy and transparent AI explanations with verified citations. Built on Google Cloud for scalability, cost-efficiency, and trust. Designed for ease of use with fewer steps and seamless integration on Android.
 
 
+## 📈 Benchmark Snapshot (Nov 2025)
+
+We run an internal regression suite against the curated dataset in `tests/misinformation_final.csv` (texts, images, links).  
+The latest run produced:
+
+- **Overall accuracy:** **75.00 %**
+- **Plot:**  
+  ![TruthLens accuracy breakdown](tests/results.png)
+
+You can explore the test-reports in the `/tests` directory.
+
+> **Honest status:** These are early numbers. We’re actively refining prompts, evidence retrieval, and media handling (especially video) to push accuracy well above 75 %. Expect rapid iterations and model fine-tuning over the next releases.
+
+
 ## 🏗️ Architecture
 
 ```
@@ -180,19 +194,6 @@ curl -H "Authorization: Bearer test-key" \
      -F "language=en" \
      http://localhost:8080/v1/verify
 ```
-
-## 📈 Benchmark Snapshot (Nov 2025)
-
-We run an internal regression suite against the curated dataset in `tests/misinformation_final.csv` (texts, images, links).  
-The latest run produced:
-
-- **Overall accuracy:** **75.00 %** 
-- **Plot:**  
-  ![TruthLens accuracy breakdown](tests/results.png)
-
-You can explore the test-reports in the /tests dir 
-
-> **Honest status:** These are early numbers. We’re actively refining prompts, evidence retrieval, and media handling (especially video) to push accuracy well above 75 %. Expect rapid iterations and model fine-tuning over the next releases.
 
 ## 🔒 Security
 - **API Keys**: Bearer token authentication
