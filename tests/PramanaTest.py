@@ -1,3 +1,4 @@
+import os
 import requests
 import time
 from pathlib import Path
@@ -6,7 +7,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 
 API_URL = "https://truthlens-api-276376440888.us-central1.run.app/v1"
-API_KEY = "AIzaSyDwfXPXq_ArGiVi7EAaT-fVTkOHUb_NXzA"
+API_KEY = os.getenv("PRAMANA_API_KEY") or os.getenv("TRUTHLENS_API_KEY") or ""
 
 BASE_DIR = Path(__file__).resolve().parent
 CSV_PATH = BASE_DIR / "misinformation_final.csv"
@@ -41,20 +42,28 @@ def resolve_media_path(raw_path: str) -> Path:
     raise FileNotFoundError(f"Media file not found for entry '{raw_path}' (looked in {search_dir})")
 
 
+def require_api_key() -> str:
+    if not API_KEY:
+        raise RuntimeError("API key missing. Set PRAMANA_API_KEY or TRUTHLENS_API_KEY in your environment.")
+    return API_KEY
+
+
 def verify_text(text: str) -> requests.Response:
+    key = require_api_key()
     return requests.post(
         f"{API_URL}/verify",
-        headers={"Authorization": f"Bearer {API_KEY}"},
+        headers={"Authorization": f"Bearer {key}"},
         data={"language": "en", "mode": "fast", "text": text},
         timeout=60,
     )
 
 
 def verify_media(filepath: Path) -> requests.Response:
+    key = require_api_key()
     with filepath.open("rb") as file_handle:
         return requests.post(
             f"{API_URL}/verify_media",
-            headers={"Authorization": f"Bearer {API_KEY}"},
+            headers={"Authorization": f"Bearer {key}"},
             files={"file": (filepath.name, file_handle)},
             data={"language": "en", "mode": "fast"},
             timeout=180,

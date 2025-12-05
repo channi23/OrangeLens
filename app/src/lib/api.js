@@ -1,6 +1,17 @@
-const BASE_URL = 'https://truthlens-api-276376440888.us-central1.run.app';
-const MASTER_KEY = 'AIzaSyDwfXPXq_ArGiVi7EAaT-fVTkOHUb_NXzA';
+const BASE_URL =
+  process.env.REACT_APP_API_BASE_URL || 'https://truthlens-api-276376440888.us-central1.run.app';
+const MASTER_KEY = process.env.REACT_APP_MASTER_KEY || '';
 const STORAGE_KEY = 'pramana_api_key';
+
+const requireApiKey = () => {
+  const key = getStoredApiKey() || MASTER_KEY;
+  if (!key) {
+    throw new Error(
+      'API key missing. Generate a key in the console or set REACT_APP_MASTER_KEY in your .env.local.'
+    );
+  }
+  return key;
+};
 
 export const getStoredApiKey = () => {
   try {
@@ -20,7 +31,7 @@ export const storeApiKey = (key) => {
 };
 
 const fetchWithAuth = async (path, options = {}) => {
-  const apiKey = getStoredApiKey() || MASTER_KEY;
+  const apiKey = requireApiKey();
   const headers = {
     'Content-Type': 'application/json',
     ...(options.headers || {}),
@@ -41,6 +52,7 @@ const fetchWithAuth = async (path, options = {}) => {
 };
 
 export const registerApiKey = async ({ email, validityDays }) => {
+  requireApiKey();
   const payload = {};
   if (email) payload.email = email;
   if (validityDays) payload.valid_for_days = validityDays;
@@ -57,8 +69,7 @@ export const registerApiKey = async ({ email, validityDays }) => {
 };
 
 export const verifyClaim = async ({ text, mode = 'fast', language = 'en', image }) => {
-  const apiKey = getStoredApiKey() || MASTER_KEY;
-  if (!apiKey) throw new Error('API key required. Generate one first.');
+  const apiKey = requireApiKey();
 
   const formData = new FormData();
   if (text) formData.append('text', text);

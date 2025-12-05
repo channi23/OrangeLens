@@ -4,6 +4,7 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.runtime.LaunchedEffect
@@ -34,7 +35,8 @@ class ShareReceiverActivity : ComponentActivity() {
         .writeTimeout(30, TimeUnit.SECONDS)
         .build()
 
-    private val API_KEY = "AIzaSyDwfXPXq_ArGiVi7EAaT-fVTkOHUb_NXzA"
+    private val apiKey: String
+        get() = BuildConfig.API_KEY
     private val BASE_URL = "https://truthlens-api-276376440888.us-central1.run.app/v1/verify"
 
     private var sharedImageUri: Uri? = null
@@ -134,13 +136,17 @@ class ShareReceiverActivity : ComponentActivity() {
 
     // --- Backend calls ---
     private fun sendTextToBackend(text: String, onResult: (VerifyUiState) -> Unit) {
+        val key = apiKeyOrNotify() ?: run {
+            onResult(VerifyUiState(status = "Missing API key", verdict = "Error", showRetry = true))
+            return
+        }
         val jsonBody = """{"text": "${text.replace("\"", "\\\"")}"}"""
             .toRequestBody("application/json; charset=utf-8".toMediaTypeOrNull())
 
         val request = Request.Builder()
             .url(BASE_URL)
             .addHeader("Content-Type", "application/json")
-            .addHeader("Authorization", "Bearer $API_KEY")
+            .addHeader("Authorization", "Bearer $key")
             .post(jsonBody)
             .build()
 
@@ -148,6 +154,10 @@ class ShareReceiverActivity : ComponentActivity() {
     }
 
     private fun sendImageToBackend(imageUri: Uri, onResult: (VerifyUiState) -> Unit) {
+        val key = apiKeyOrNotify() ?: run {
+            onResult(VerifyUiState(status = "Missing API key", verdict = "Error", showRetry = true))
+            return
+        }
         try {
             val imageBytes = contentResolver.openInputStream(imageUri)?.use { it.readBytes() }
             if (imageBytes == null) {
@@ -169,7 +179,7 @@ class ShareReceiverActivity : ComponentActivity() {
 
             val request = Request.Builder()
                 .url(BASE_URL)
-                .addHeader("Authorization", "Bearer $API_KEY")
+                .addHeader("Authorization", "Bearer $key")
                 .post(requestBody)
                 .build()
 
@@ -202,4 +212,19 @@ class ShareReceiverActivity : ComponentActivity() {
     }
 
     private fun parseResult(result: String): VerifyUiState = parseVerifyResult(result)
+
+    private fun apiKeyOrNotify(): String? {
+        val key = apiKey
+        if (key.isBlank()) {
+            runOnUiThread {
+                Toast.makeText(
+                    this,
+                    "API key missing. Add PRAMANA_API_KEY in local.properties or PRAMANA_ANDROID_API_KEY env.",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+            return null
+        }
+        return key
+    }
 }

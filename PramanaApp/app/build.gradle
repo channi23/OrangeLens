@@ -1,6 +1,28 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
+}
+
+def localProps = new Properties()
+def localPropsFile = rootProject.file("local.properties")
+if (localPropsFile.exists()) {
+    localPropsFile.withInputStream { localProps.load(it) }
+}
+
+def resolvedApiKey = System.getenv("PRAMANA_ANDROID_API_KEY")
+if (!resolvedApiKey) {
+    resolvedApiKey = System.getenv("TRUTHLENS_API_KEY")
+}
+if (!resolvedApiKey) {
+    resolvedApiKey = localProps.getProperty("PRAMANA_API_KEY")
+}
+if (!resolvedApiKey) {
+    resolvedApiKey = localProps.getProperty("TRUTHLENS_API_KEY")
+}
+if (!resolvedApiKey) {
+    resolvedApiKey = ""
 }
 
 android {
@@ -15,6 +37,7 @@ android {
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        buildConfigField("String", "API_KEY", "\"${resolvedApiKey}\"")
     }
 
     buildTypes {

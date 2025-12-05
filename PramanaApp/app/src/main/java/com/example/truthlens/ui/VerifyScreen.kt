@@ -98,6 +98,7 @@ import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import coil.compose.AsyncImage
 import com.example.truthlens.R
+import com.example.truthlens.BuildConfig
 import com.example.truthlens.core.parseVerifyResult
 import com.example.truthlens.ui.theme.VerifyUiState
 import kotlinx.coroutines.delay
@@ -118,7 +119,8 @@ import java.util.Locale
 import java.util.concurrent.TimeUnit
 
 // API Endpoints
-private const val API_KEY = "AIzaSyDwfXPXq_ArGiVi7EAaT-fVTkOHUb_NXzA" // Replace with your actual API key
+private val API_KEY: String
+    get() = BuildConfig.API_KEY
 private const val BASE_URL = "https://truthlens-api-276376440888.us-central1.run.app/v1"
 private const val VERIFY_URL = "$BASE_URL/verify"
 private const val VERIFY_MEDIA_URL = "$BASE_URL/verify_media"
@@ -126,10 +128,23 @@ private const val FEEDBACK_URL = "$BASE_URL/feedback"
 private const val TRENDING_URL = "$BASE_URL/trending"
 
 // Attach both headers; backend may accept either Authorization: Bearer or x-api-key
-private fun Request.Builder.withAuth(): Request.Builder {
+private fun Request.Builder.withAuth(apiKey: String): Request.Builder {
     return this
-        .header("Authorization", "Bearer $API_KEY")
-        .header("x-api-key", API_KEY)
+        .header("Authorization", "Bearer $apiKey")
+        .header("x-api-key", apiKey)
+}
+
+private fun Context.requireApiKey(): String? {
+    val key = API_KEY
+    if (key.isBlank()) {
+        Toast.makeText(
+            this,
+            "API key missing. Add PRAMANA_API_KEY in local.properties or PRAMANA_ANDROID_API_KEY env.",
+            Toast.LENGTH_LONG
+        ).show()
+        return null
+    }
+    return key
 }
 
 // Theming
@@ -299,9 +314,13 @@ fun VerifyScreen(
     }
 
     fun fetchTrendingItems() {
+        val apiKey = context.requireApiKey() ?: run {
+            loadingTrending = false
+            return
+        }
         loadingTrending = true
         val request = Request.Builder()
-            .withAuth()
+            .withAuth(apiKey)
             .url(TRENDING_URL)
             .get()
             .build()
@@ -408,8 +427,9 @@ fun VerifyScreen(
 
         val requestBody = jsonBody.toRequestBody("application/json".toMediaTypeOrNull())
 
+        val apiKey = context.requireApiKey() ?: return
         val request = Request.Builder()
-            .withAuth()
+            .withAuth(apiKey)
             .url(FEEDBACK_URL)
             .post(requestBody)
             .build()
@@ -445,6 +465,7 @@ fun VerifyScreen(
     }
 
     fun sendTextOnly(text: String) {
+        val apiKey = context.requireApiKey() ?: return
         val jsonBody = JSONObject().apply {
             put("text", text)
             put("language", getSupportedLanguage(context))
@@ -452,7 +473,7 @@ fun VerifyScreen(
         }.toString().toRequestBody("application/json".toMediaTypeOrNull())
 
         val jsonReq = Request.Builder()
-            .withAuth()
+            .withAuth(apiKey)
             .url(VERIFY_URL)
             .post(jsonBody)
             .build()
@@ -488,7 +509,7 @@ fun VerifyScreen(
                             .addFormDataPart("mode", "fast")
                             .build()
                         val formReq = Request.Builder()
-                            .withAuth()
+                            .withAuth(apiKey)
                             .url(VERIFY_URL)
                             .post(mp)
                             .build()
@@ -532,6 +553,7 @@ fun VerifyScreen(
 
     fun sendMedia(uri: Uri, text: String, mediaType: String, ctx: Context) {
         // ✅ Use verify for image/text, verify_media for video
+        val apiKey = ctx.requireApiKey() ?: return
         val endpoint = if (mediaType == "video") VERIFY_MEDIA_URL else VERIFY_URL
 
         val fileName = when (mediaType) {
@@ -577,7 +599,7 @@ fun VerifyScreen(
             val mp = mpBuilder.build()
 
             val req = Request.Builder()
-                .withAuth()
+                .withAuth(apiKey)
                 .url(endpoint)
                 .post(mp)
                 .build()
@@ -601,7 +623,7 @@ fun VerifyScreen(
 
     // Warm up Cloud Run to reduce first-request latency (cold start)
     LaunchedEffect(Unit) {
-        warmUpBackend(client, mainHandler)
+        warmUpBackend(client, mainHandler, API_KEY.takeIf { it.isNotBlank() })
     }
 
     Box(modifier = Modifier.fillMaxSize().background(colors.background)) {
@@ -738,9 +760,10 @@ fun VerifyScreen(
 // All other composables (TrendingScreen, MainInputScreen, ResultScreen, etc.) follow here...
 
 // Warm up Cloud Run to reduce first-request latency (cold start)
-private fun warmUpBackend(client: OkHttpClient, mainHandler: Handler) {
+private fun warmUpBackend(client: OkHttpClient, mainHandler: Handler, apiKey: String?) {
+    if (apiKey.isNullOrBlank()) return
     val warmupRequest = Request.Builder()
-        .withAuth()
+        .withAuth(apiKey)
         .url("$BASE_URL/healthcheck")
         .get()
         .build()
@@ -750,7 +773,7 @@ private fun warmUpBackend(client: OkHttpClient, mainHandler: Handler) {
         override fun onFailure(call: Call, e: IOException) {
             // Fallback to trending (do nothing with response)
             val fallback = Request.Builder()
-                .withAuth()
+                .withAuth(apiKey)
                 .url(TRENDING_URL)
                 .get()
                 .build()
