@@ -1,0 +1,10 @@
+verifiers:
+  - name: verifier-text
+    url: http://verifier-text:8080/node/verify_task
+    capabilities:
+      - text
+  - name: verifier-media
+    url: http://verifier-media:8080/node/verify_task
+    capabilities:
+      - image
+      - video

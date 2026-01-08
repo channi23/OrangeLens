@@ -28,3 +28,6 @@ vertexai==1.71.1
 tenacity==8.3.0
 tqdm==4.66.4
 google-cloud-vision>=3.6.0
+SQLAlchemy==2.0.36
+psycopg2-binary==2.9.9
+PyYAML==6.0.2

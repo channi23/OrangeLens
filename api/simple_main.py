@@ -14,7 +14,7 @@ app.add_middleware(
 
 @app.get("/")
 async def root():
-    return {"message": "TruthLens API is running"}
+    return {"message": "PRAMANA API is running"}
 
 @app.get("/healthz")
 async def health_check():

@@ -1,3 +1,28 @@
+# 🧩 Pramāṇa Protocol (Pre‑Verification Layer)
+
+Pramāṇa is a **pre‑verification protocol** designed to verify content *before* it goes live, rather than after the fact. It provides a robust backend-integrated layer for content management systems (CMS), social platforms, and marketplaces to ensure that all user-generated content is checked and signed before publication.
+
+**Three‑Node Architecture:**
+- **Gateway node:** Receives content submissions from the platform, orchestrates verification, and returns signed proofs.
+- **Text verifier node:** Analyzes and verifies text-based content using AI and external fact sources.
+- **Media verifier node:** Handles images, video frames, and other media for authenticity, manipulation, and context checks.
+
+**Key Protocol Features:**
+- **Content hashing:** Every submission is hashed for integrity and deduplication.
+- **Caching:** Verified responses are cached for instant retrieval and reduced cost.
+- **Signed proofs:** Each verification result is cryptographically signed by the protocol nodes.
+- **Trust tags:** Attestations and trust-level tags are attached to content for downstream consumers and moderators.
+
+Platforms integrate this protocol layer directly into their backend workflows to gate content before it is visible to end users, maximizing trust and minimizing the spread of misinformation.
+
+## ☁️ Cloud & LLM Execution (Azure + GCP)
+
+- **Azure VM deployment:** The three-node protocol runs via Docker Compose on a single Azure VM for easy scaling and management.
+- **Azure OpenAI (GPT‑4o‑mini):** When enabled, the text verifier node uses GPT‑4o‑mini for advanced LLM-based verification.
+- **Proof of execution:** All actions are logged and responses (including LLM outputs) are cached for traceability.
+- **GCP support:** Google Cloud Platform components (BigQuery caching, Cloud Run, Vision API) remain fully supported and are described below.
+
+---
 # Pramana - AI-Powered Fact Verification
 
 

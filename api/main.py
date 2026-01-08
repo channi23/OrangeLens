@@ -6,6 +6,22 @@ import imghdr
 import mimetypes
 from datetime import datetime, timedelta
 import random
+from contextlib import asynccontextmanager
+from api.models.schemas import (
+    NodeMetaData,
+    VerificationRequest,
+    ContentType,
+    Verdict,
+    Confidence,
+)
+from api.db import get_db, init_db
+from api.ledger import get_record_by_hash, get_record_by_id, insert_truth_record
+from api.hash_utils import canonicalize_text, sha256_hex, stable_json, hash_media_placeholder
+from api.verifiers.text import verify_text
+from api.verifiers.image import verify_image
+from api.scoring import aggregate_results
+from api.node_registry import load_node_registry
+from sqlalchemy.orm import Session
 from typing import Dict, Any, Optional, List
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -19,6 +35,7 @@ from vertexai.preview.generative_models import GenerativeModel, Part
 from google.api_core.exceptions import InvalidArgument, ResourceExhausted
 import vertexai
 import requests
+import aiohttp
 import hashlib
 import uuid
 import re
@@ -43,6 +60,114 @@ from urllib.parse import quote
 from concurrent.futures import ThreadPoolExecutor
 # --- Google Vision API import for web entity detection ---
 from google.cloud import vision
+from api.services.node_crypto import (
+    load_node_keys_from_b64,
+    generate_node_private_key_b64,
+    get_public_key_b64,
+    sign_proof,
+    verify_proof,
+)
+
+
+#utility
+
+def _parse_capabilities(raw:str)->list[str]:
+    if not raw:
+        return[]
+    return[c.strip() for c in raw.split(",") if c.strip()]
+
+_NODE_REGISTRY: List[Dict[str, Any]] = []
+
+
+def _node_role() -> str:
+    return os.getenv("PRAMANA_NODE_ROLE", "gateway").strip().lower()
+
+
+def _is_gateway() -> bool:
+    return _node_role() == "gateway"
+
+
+def _load_registry() -> None:
+    global _NODE_REGISTRY
+    text_url = os.getenv("PRAMANA_VERIFIER_TEXT_URL", "").strip()
+    media_url = os.getenv("PRAMANA_VERIFIER_MEDIA_URL", "").strip()
+    env_nodes: List[Dict[str, Any]] = []
+    if text_url:
+        env_nodes.append(
+            {"name": "verifier-text", "url": text_url, "capabilities": ["text"]}
+        )
+    if media_url:
+        env_nodes.append(
+            {
+                "name": "verifier-media",
+                "url": media_url,
+                "capabilities": ["image", "video"],
+            }
+        )
+    if env_nodes:
+        _NODE_REGISTRY = env_nodes
+        logging.info("✅ Loaded %s verifier nodes from env", len(_NODE_REGISTRY))
+        return
+
+    path = os.getenv("PRAMANA_NODE_REGISTRY_PATH", "config/nodes.yaml")
+    _NODE_REGISTRY = load_node_registry(path)
+    if _NODE_REGISTRY:
+        logging.info("✅ Loaded %s verifier nodes from registry", len(_NODE_REGISTRY))
+    else:
+        logging.warning("⚠️ No verifier nodes loaded from registry path: %s", path)
+
+
+def _verifier_fallback(name: str, detail: str) -> Dict[str, Any]:
+    return {
+        "verdict": "unknown",
+        "truth_score": 0.4,
+        "confidence": "low",
+        "explanation": f"Verifier {name} unavailable: {detail}",
+        "citations": [],
+    }
+
+
+async def _run_distributed_verification(request: VerificationRequest) -> Dict[str, Any]:
+    payload = request.model_dump(exclude_none=True)
+
+    async def _call_verifier(session: aiohttp.ClientSession, node: Dict[str, Any]) -> Dict[str, Any]:
+        name = node.get("name", "verifier")
+        url = node.get("url")
+        if not url:
+            return _verifier_fallback(name, "missing URL")
+        try:
+            async with session.post(url, json=payload, timeout=5) as resp:
+                if resp.status != 200:
+                    detail = await resp.text()
+                    return _verifier_fallback(name, f"HTTP {resp.status}: {detail}")
+                data = await resp.json()
+                data.setdefault("verifier_id", name)
+                return data
+        except Exception as exc:
+            return _verifier_fallback(name, str(exc))
+
+    if not _NODE_REGISTRY:
+        return await _run_protocol_verification(request)
+
+    timeout = aiohttp.ClientTimeout(total=8)
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        results = await asyncio.gather(
+            *[_call_verifier(session, node) for node in _NODE_REGISTRY]
+        )
+
+    aggregated = aggregate_results(results)
+    verdict = _map_verdict(aggregated.get("verdict"))
+    truth_score = float(aggregated.get("truth_score", 0.5))
+    truth_score = max(0.0, min(1.0, truth_score))
+    return {
+        "verdict": verdict,
+        "truth_score": truth_score,
+        "confidence": aggregated.get("confidence", _confidence_from_score(truth_score)),
+        "explanation": aggregated.get("explanation", "Verification pending."),
+        "citations": aggregated.get("citations", []),
+    }
+
+
 # --- Web Entities Detection Helper ---
 def detect_web_entities(image_bytes: bytes) -> dict:
     """
@@ -69,11 +194,53 @@ def detect_web_entities(image_bytes: bytes) -> dict:
         logging.error(f"detect_web_entities failed: {e}")
         return {"entities": [], "best_guess_label": ""}
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    FastAPI lifespan for protocol initialization (Phase 1.4).
+    """
+    try:
+        # ---- Load Pramana node crypto keys ----
+        priv_b64 = os.getenv("PRAMANA_NODE_PRIVATE_KEY_B64", "")
+
+        # Optional: Secret Manager fallback
+        if not priv_b64:
+            secret_name = os.getenv("PRAMANA_NODE_PRIVATE_KEY_SECRET", "")
+            if secret_name:
+                priv_b64 = get_secret_cached(secret_name)
+
+        # MVP-safe fallback: generate ephemeral key
+        if not priv_b64:
+            priv_b64 = generate_node_private_key_b64()
+            logging.warning(
+                "⚠️ PRAMANA node private key not set. Generated ephemeral key (MVP only)."
+            )
+
+        load_node_keys_from_b64(priv_b64)
+        logging.info("✅ Pramana node Ed25519 key loaded")
+        init_db()
+        logging.info("✅ Pramana ledger DB initialized")
+        if _is_gateway():
+            _load_registry()
+
+    except Exception as e:
+        logging.error(f"❌ Failed to initialize Pramana node keys: {e}")
+        raise
+
+    # ---- Yield control to app ----
+    yield
+
+    # ---- Shutdown hook (optional) ----
+    logging.info("🔻 Pramana node shutting down")
+
+
+
 # Initialize FastAPI app
 app = FastAPI(
     title="TruthLens API",
     description="AI-Powered Fact Verification API",
-    version="1.0.0"
+    version="1.0.0",
+    lifespan=lifespan,
 )
 
 # CORS middleware
@@ -122,6 +289,72 @@ def _init_storage_client() -> Optional[storage.Client]:
     except Exception as exc:
         logging.warning(f"Google Cloud Storage client initialization failed: {exc}")
     return None
+
+
+@app.get("/node/metadata", response_model=NodeMetaData)
+def node_metadata():
+    """
+    Protocol identity endpoint (Phase 1.3).
+    This allows gateways and other nodes to discover node identity.
+    """
+
+    node_id = os.getenv("PRAMANA_NODE_ID", "local-node")
+    node_name = os.getenv("PRAMANA_NODE_NAME", "Pramana Node (MVP)")
+    node_version = os.getenv("PRAMANA_NODE_VERSION", "0.1")
+    region = os.getenv("PRAMANA_REGION", "local")
+    capabilities = _parse_capabilities(
+        os.getenv("PRAMANA_CAPABILITIES", "text,image,video")
+    )
+
+    # Placeholder until Phase 1.4 (Ed25519 signing)
+    public_key = get_public_key_b64() or "TODO_PUBLIC_KEY"
+
+    return NodeMetaData(
+        node_id=node_id,
+        node_name=node_name,
+        node_version=node_version,
+        region=region,
+        capabilities=capabilities,
+        public_key=public_key,
+    )
+
+
+@app.get("/node/health")
+def node_health() -> Dict[str, str]:
+    return {
+        "status": "healthy",
+        "role": _node_role(),
+        "timestamp": datetime.utcnow().isoformat(),
+    }
+
+
+@app.get("/node/test_sign")
+def node_test_sign():
+    """ Internal MVP test:sign  and verify a small payload using the node's keys."""
+    payload={
+        "msg":"hello-pramana",
+        "ts":datetime.utcnow().isoformat()+'Z'
+    }
+    token = sign_proof(payload)
+    decoded = verify_proof(token,get_public_key_b64())
+    return{
+        "public_key":get_public_key_b64() or "",
+        "token":token,
+        "decoded":decoded,
+    }
+
+
+@app.post("/node/verify_task")
+async def node_verify_task(request: VerificationRequest) -> Dict[str, Any]:
+    role = _node_role()
+    if role == "verifier-text":
+        result = verify_text(request.text)
+    elif role == "verifier-media":
+        result = verify_image(request.media_url, request.source_url)
+    else:
+        raise HTTPException(status_code=403, detail="verify_task is only available on verifier nodes")
+    result["verifier_id"] = os.getenv("PRAMANA_NODE_ID", role)
+    return result
 
 
 def _init_bigquery_client() -> Optional[bigquery.Client]:
@@ -1163,7 +1396,7 @@ async def process_verification_request(
         except Exception as e:
             logging.warning(f"Video forensic enrichment failed: {e}")
 
-    gemini_result = await verify_with_gemini(
+    llm_result = await verify_with_llm(
         claim_text,
         language,
         evidence_entries,
@@ -1172,6 +1405,8 @@ async def process_verification_request(
         image_mime=image_mime,
         video_context=video_ctx,
     )
+
+    gemini_result = llm_result
 
     # (Serper enrichment for image cases has been moved up to pre-Gemini. Post-Gemini block removed.)
 
@@ -1693,6 +1928,161 @@ def detect_language(text: str) -> str:
 # Allow overriding the model via environment variable
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite")
 
+# --- LLM provider switch (Gemini default; Azure OpenAI optional) ---
+LLM_PROVIDER = os.getenv("LLM_PROVIDER", "gemini").strip().lower()
+
+AZURE_OPENAI_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT", "").strip()
+AZURE_OPENAI_API_KEY = os.getenv("AZURE_OPENAI_API_KEY", "").strip()
+AZURE_OPENAI_DEPLOYMENT = os.getenv("AZURE_OPENAI_DEPLOYMENT", "").strip()
+AZURE_OPENAI_API_VERSION = os.getenv("AZURE_OPENAI_API_VERSION", "2024-10-01-preview").strip()
+
+
+def _azure_openai_url() -> str:
+    if not AZURE_OPENAI_ENDPOINT or not AZURE_OPENAI_DEPLOYMENT:
+        return ""
+    base = AZURE_OPENAI_ENDPOINT.rstrip("/")
+    return f"{base}/openai/deployments/{AZURE_OPENAI_DEPLOYMENT}/chat/completions?api-version={AZURE_OPENAI_API_VERSION}"
+
+
+def _call_azure_openai_chat(prompt: str, temperature: float = 0.2, max_tokens: int = 900) -> str:
+    """Best-effort Azure OpenAI chat call via REST. Returns assistant text or empty string."""
+    url = _azure_openai_url()
+    if not url:
+        raise RuntimeError("Azure OpenAI not configured (missing AZURE_OPENAI_ENDPOINT or AZURE_OPENAI_DEPLOYMENT)")
+    if not AZURE_OPENAI_API_KEY:
+        raise RuntimeError("Azure OpenAI not configured (missing AZURE_OPENAI_API_KEY)")
+
+    headers = {
+        "Content-Type": "application/json",
+        "api-key": AZURE_OPENAI_API_KEY,
+    }
+    payload = {
+        "messages": [
+            {"role": "system", "content": "You are a fact-checking assistant. You MUST output valid JSON only."},
+            {"role": "user", "content": prompt},
+        ],
+        "temperature": float(temperature),
+        "max_tokens": int(max_tokens),
+    }
+
+    resp = requests.post(url, headers=headers, json=payload, timeout=30)
+    if resp.status_code != 200:
+        raise RuntimeError(f"Azure OpenAI HTTP {resp.status_code}: {resp.text[:500]}")
+    data = resp.json() or {}
+    choices = data.get("choices") or []
+    if not choices:
+        return ""
+    msg = (choices[0] or {}).get("message") or {}
+    return (msg.get("content") or "").strip()
+
+
+async def verify_with_azure_openai(
+    claim_text: str,
+    language: str,
+    evidence_entries: List[Dict[str, Any]],
+    fact_check_results: List[Dict[str, Any]],
+    image_bytes: Optional[bytes] = None,
+    image_mime: str = "image/jpeg",
+    video_context: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Azure OpenAI-backed verifier. Image bytes are not sent (text-only prompt) to keep MVP simple."""
+
+    # Build a compact evidence summary
+    ev_lines = []
+    for e in (evidence_entries or [])[:8]:
+        title = (e.get("title") or "").strip()
+        url = (e.get("url") or "").strip()
+        src = (e.get("source") or "").strip()
+        snip = (e.get("snippet") or "").strip()
+        ev_lines.append(f"- {title} | {src} | {url} | {snip}")
+
+    fc_lines = []
+    for r in (fact_check_results or [])[:8]:
+        fc_lines.append(
+            f"- claim: {(r.get('claim') or '')} | rating: {(r.get('rating') or '')} | reviewer: {(r.get('reviewer') or '')} | url: {(r.get('url') or '')}"
+        )
+
+    prompt = f"""
+Return ONLY valid JSON with this schema:
+{{
+  \"verdict\": \"true\"|\"false\"|\"misleading\"|\"unknown\",
+  \"truth_score\": number,
+  \"confidence\": \"low\"|\"medium\"|\"high\",
+  \"explanation\": string,
+  \"citations\": [{{\"title\": string, \"url\": string, \"source\": string}}]
+}}
+
+Language: {language}
+Claim: {claim_text}
+
+Evidence (news/search snippets):
+{chr(10).join(ev_lines) if ev_lines else "- (none)"}
+
+Fact-check results:
+{chr(10).join(fc_lines) if fc_lines else "- (none)"}
+
+If evidence is insufficient, set verdict=unknown and explain what is missing.
+""".strip()
+
+    loop = asyncio.get_event_loop()
+
+    def _call():
+        txt = _call_azure_openai_chat(prompt)
+        parsed = _parse_json_from_text(txt)
+        if parsed:
+            return parsed
+        # Fallback if model wrapped JSON in text
+        return {
+            "verdict": "unknown",
+            "truth_score": 0.45,
+            "confidence": "low",
+            "explanation": "Azure OpenAI returned non-JSON output.",
+            "citations": [],
+        }
+
+    result = await loop.run_in_executor(executor, _call)
+
+    # Normalize
+    result.setdefault("verdict", "unknown")
+    result.setdefault("truth_score", 0.45)
+    result.setdefault("confidence", "low")
+    result.setdefault("explanation", "")
+    result.setdefault("citations", [])
+    return result
+
+
+async def verify_with_llm(
+    claim_text: str,
+    language: str,
+    evidence_entries: List[Dict[str, Any]],
+    fact_check_results: List[Dict[str, Any]],
+    image_bytes: Optional[bytes] = None,
+    image_mime: str = "image/jpeg",
+    video_context: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Dispatch to the configured LLM provider."""
+    provider = (os.getenv("LLM_PROVIDER", LLM_PROVIDER) or "gemini").strip().lower()
+    if provider in ("azure", "azure_openai", "aoai"):
+        return await verify_with_azure_openai(
+            claim_text,
+            language,
+            evidence_entries,
+            fact_check_results,
+            image_bytes=image_bytes,
+            image_mime=image_mime,
+            video_context=video_context,
+        )
+    # Default: Gemini path
+    return await verify_with_gemini(
+        claim_text,
+        language,
+        evidence_entries,
+        fact_check_results,
+        image_bytes=image_bytes,
+        image_mime=image_mime,
+        video_context=video_context,
+    )
+
 # --- Lazy Gemini initialization for faster startup ---
 GEMINI_MODEL_INSTANCE = None
 
@@ -1710,7 +2100,14 @@ def get_gemini_model():
 
 @app.on_event("startup")
 async def warmup_model():
-    """Warm up Gemini model during startup to prevent cold-start lag"""
+    """Warm up Gemini model during startup to prevent cold-start lag (Gemini only)."""
+    provider = (os.getenv("LLM_PROVIDER", LLM_PROVIDER) or "gemini").strip().lower()
+    if provider in ("azure", "azure_openai", "aoai"):
+        logging.info("Skipping Gemini warmup (LLM_PROVIDER=%s)", provider)
+        return
+    if os.getenv("PRAMANA_SKIP_GEMINI_WARMUP") == "1":
+        logging.info("Skipping Gemini warmup (PRAMANA_SKIP_GEMINI_WARMUP=1)")
+        return
     try:
         _ = get_gemini_model()
         logging.info("🔥 Gemini model warmed up successfully")
@@ -2079,6 +2476,166 @@ async def log_request(request_id: str, text: str, mode: str, language: str,
 async def health_check():
     """Health check endpoint"""
     return {"status": "healthy", "timestamp": datetime.utcnow().isoformat()}
+
+
+def _map_verdict(raw: str) -> Verdict:
+    value = (raw or "unknown").lower()
+    if value in {"true", "likely_real", "real", "correct"}:
+        return Verdict.true
+    if value in {"false", "likely_fake", "fake", "misleading", "misinfo", "incorrect"}:
+        return Verdict.misleading
+    if value in {"unverifiable", "unverified"}:
+        return Verdict.unverified
+    return Verdict.unknown
+
+
+def _confidence_from_score(score: float) -> Confidence:
+    if score >= 0.8:
+        return Confidence.high
+    if score >= 0.5:
+        return Confidence.medium
+    return Confidence.low
+
+
+def _derive_content_hash(request: VerificationRequest) -> str:
+    if request.content_hash:
+        return request.content_hash
+    if request.content_type == ContentType.text:
+        text = canonicalize_text(request.text or "")
+        if not text:
+            raise HTTPException(status_code=400, detail="Missing text for content_type=text")
+        return sha256_hex(text)
+    if request.source_url:
+        return sha256_hex(str(request.source_url))
+    if request.media_url:
+        return sha256_hex(str(request.media_url))
+    if request.content_type in (ContentType.image, ContentType.video):
+        return hash_media_placeholder(b"")
+    raise HTTPException(status_code=400, detail="Missing content for hashing")
+
+
+async def _run_protocol_verification(request: VerificationRequest) -> Dict[str, Any]:
+    results: List[Dict[str, Any]] = []
+
+    if request.content_type == ContentType.text:
+        results.append(verify_text(request.text))
+    elif request.content_type in (ContentType.image, ContentType.video):
+        results.append(verify_image(request.media_url, request.source_url))
+    elif request.content_type == ContentType.url:
+        results.append(verify_text(str(request.source_url or "")))
+
+    aggregated = aggregate_results(results)
+    verdict = _map_verdict(aggregated.get("verdict"))
+    truth_score = float(aggregated.get("truth_score", 0.5))
+    truth_score = max(0.0, min(1.0, truth_score))
+    return {
+        "verdict": verdict,
+        "truth_score": truth_score,
+        "confidence": aggregated.get("confidence", _confidence_from_score(truth_score)),
+        "explanation": aggregated.get("explanation", "Verification pending."),
+        "citations": aggregated.get("citations", []),
+    }
+
+
+@app.post("/prepare_verify")
+async def prepare_verify(request: VerificationRequest) -> Dict[str, str]:
+    content_hash = _derive_content_hash(request)
+    return {"content_hash": content_hash}
+
+
+@app.post("/verify")
+async def verify_protocol(
+    request: VerificationRequest,
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    content_hash = _derive_content_hash(request)
+    cached_record = get_record_by_hash(db, content_hash)
+    if cached_record:
+        cached_result = dict(cached_record.result_json)
+        cached_result["proof"] = cached_record.proof
+        cached_result["cached"] = True
+        return cached_result
+
+    if _is_gateway():
+        verification = await _run_distributed_verification(request)
+    else:
+        verification = await _run_protocol_verification(request)
+    issuer = os.getenv("PRAMANA_NODE_ID", "local-node")
+    issued_at = datetime.utcnow().isoformat() + "Z"
+    verdict_hash = sha256_hex(
+        stable_json(
+            {
+                "verdict": verification["verdict"],
+                "truth_score": verification["truth_score"],
+                "issuer": issuer,
+                "issued_at": issued_at,
+            }
+        )
+    )
+    record_id = content_hash
+    proof_payload = {
+        "protocol": "pramana-proof-v0",
+        "record_id": record_id,
+        "content_hash": content_hash,
+        "verdict": verification["verdict"],
+        "truth_score": verification["truth_score"],
+        "verdict_hash": verdict_hash,
+        "issued_at": issued_at,
+        "issuer": issuer,
+    }
+    proof = sign_proof(proof_payload)
+    result = {
+        "record_id": record_id,
+        "content_hash": content_hash,
+        "verdict": verification["verdict"],
+        "truth_score": verification["truth_score"],
+        "confidence": verification["confidence"],
+        "explanation": verification["explanation"],
+        "citations": verification["citations"],
+        "issued_at": issued_at,
+        "issuer": issuer,
+        "verdict_hash": verdict_hash,
+        "proof": proof,
+        "cached": False,
+    }
+    insert_truth_record(
+        db,
+        {
+            "record_id": record_id,
+            "content_hash": content_hash,
+            "result_json": result,
+            "proof": proof,
+        },
+    )
+    return result
+
+
+@app.get("/truth_record/by_hash/{content_hash}")
+async def truth_record_by_hash(
+    content_hash: str,
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    record = get_record_by_hash(db, content_hash)
+    if record is None:
+        raise HTTPException(status_code=404, detail="TruthRecord not found")
+    result = dict(record.result_json)
+    result["proof"] = record.proof
+    result["cached"] = True
+    return result
+
+
+@app.get("/truth_record/{record_id}")
+async def truth_record_by_id(
+    record_id: str,
+    db: Session = Depends(get_db),
+) -> Dict[str, Any]:
+    record = get_record_by_id(db, record_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="TruthRecord not found")
+    result = dict(record.result_json)
+    result["proof"] = record.proof
+    result["cached"] = True
+    return result
 
 @app.post("/v1/verify-test")
 async def verify_claim_test(request: dict):

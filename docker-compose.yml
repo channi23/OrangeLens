@@ -1,0 +1,65 @@
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: pramana-postgres
+    environment:
+      POSTGRES_DB: pramana
+      POSTGRES_USER: pramana
+      POSTGRES_PASSWORD: pramana
+    volumes:
+      - pramana_pgdata:/var/lib/postgresql/data
+
+  gateway:
+    build:
+      context: ./api
+    container_name: pramana-gateway
+    environment:
+      DATABASE_URL: postgresql+psycopg2://pramana:pramana@postgres:5432/pramana
+      PRAMANA_NODE_ROLE: gateway
+      PRAMANA_NODE_ID: gateway-node
+      PRAMANA_NODE_NAME: Pramana Gateway
+      PRAMANA_NODE_VERSION: 0.1
+      PRAMANA_REGION: local
+      PRAMANA_CAPABILITIES: aggregate,text,image,video
+      PRAMANA_NODE_REGISTRY_PATH: /app/config/nodes.yaml
+    volumes:
+      - ./api/config:/app/config
+    ports:
+      - "8000:8080"
+    depends_on:
+      - postgres
+      - verifier-text
+      - verifier-media
+
+  verifier-text:
+    build:
+      context: ./api
+    container_name: pramana-verifier-text
+    environment:
+      DATABASE_URL: postgresql+psycopg2://pramana:pramana@postgres:5432/pramana
+      PRAMANA_NODE_ROLE: verifier-text
+      PRAMANA_NODE_ID: verifier-text
+      PRAMANA_NODE_NAME: Pramana Text Verifier
+      PRAMANA_NODE_VERSION: 0.1
+      PRAMANA_REGION: local
+      PRAMANA_CAPABILITIES: text
+    depends_on:
+      - postgres
+
+  verifier-media:
+    build:
+      context: ./api
+    container_name: pramana-verifier-media
+    environment:
+      DATABASE_URL: postgresql+psycopg2://pramana:pramana@postgres:5432/pramana
+      PRAMANA_NODE_ROLE: verifier-media
+      PRAMANA_NODE_ID: verifier-media
+      PRAMANA_NODE_NAME: Pramana Media Verifier
+      PRAMANA_NODE_VERSION: 0.1
+      PRAMANA_REGION: local
+      PRAMANA_CAPABILITIES: image,video
+    depends_on:
+      - postgres
+
+volumes:
+  pramana_pgdata:
