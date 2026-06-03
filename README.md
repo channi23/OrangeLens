@@ -1,5 +1,7 @@
 # 🧩 Pramāṇa Protocol (Pre‑Verification Layer)
 
+**Product walkthrough video:** [Watch the LinkedIn demo](https://www.linkedin.com/posts/sri-hariharan-sharma-aa1478286_lets-tackle-misinformation-together-one-ugcPost-7378455952590745600-YGb4/?utm_source=share&utm_medium=member_desktop&rcm=ACoAAEV7AxkBM7LcCOZTsxhrIoXa-NsHTVHMaLQ)
+
 Pramāṇa is a **pre‑verification protocol** designed to verify content *before* it goes live, rather than after the fact. It provides a robust backend-integrated layer for content management systems (CMS), social platforms, and marketplaces to ensure that all user-generated content is checked and signed before publication.
 
 **Three‑Node Architecture:**
